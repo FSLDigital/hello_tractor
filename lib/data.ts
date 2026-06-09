@@ -423,6 +423,31 @@ export function getALMForecastBase(data: DashboardData): { q: string; baseInflow
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
+  // Pass 1: last non-zero covenant per tractor from historical rows
+  const latestCovenantByTractor = new Map<string, { covenant: number; key: string }>()
+  // Accumulate covenant values per country for fallback average
+  const covenantSumByCountry: Record<string, { sum: number; count: number }> = {}
+  for (const r of data.htPerformance) {
+    const yr = r.year
+    const mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
+    const covenant = Number(r.monthly_covenant_target) || 0
+    if (covenant === 0) continue
+    const id = String(r.tractor_id)
+    const existing = latestCovenantByTractor.get(id)
+    if (!existing || key > existing.key) latestCovenantByTractor.set(id, { covenant, key })
+    const country = r.country || ''
+    if (!covenantSumByCountry[country]) covenantSumByCountry[country] = { sum: 0, count: 0 }
+    covenantSumByCountry[country].sum += covenant
+    covenantSumByCountry[country].count += 1
+  }
+  const avgCovenantByCountry: Record<string, number> = {}
+  for (const [country, { sum, count }] of Object.entries(covenantSumByCountry)) {
+    avgCovenantByCountry[country] = count > 0 ? sum / count : 0
+  }
+
   const quarterlyInflows: Record<string, number> = {}
   for (const r of data.htPerformance) {
     const yr = r.year
@@ -430,9 +455,11 @@ export function getALMForecastBase(data: DashboardData): { q: string; baseInflow
     if (!yr || !mn) continue
     const key = `${yr}-${String(mn).padStart(2, '0')}`
     if (key <= currentMonth) continue
-    const covenant = Number(r.monthly_covenant_target) || 0
     const rate = Number(r.repayment_per_area) || 0
-    if (covenant === 0 || rate === 0) continue
+    if (rate === 0) continue
+    const tractorRef = latestCovenantByTractor.get(String(r.tractor_id))
+    const covenant = tractorRef?.covenant || avgCovenantByCountry[r.country || ''] || 0
+    if (covenant === 0) continue
     const amountUSD = toUSD(covenant * rate, r.currency_code, fxRates)
     const season = seasonality[mn] || 1.0
     const q = `Q${Math.ceil(mn / 3)}'${String(yr).slice(-2)}`
