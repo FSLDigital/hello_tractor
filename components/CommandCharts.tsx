@@ -145,15 +145,24 @@ function UtilisationTrendChart({ data }: { data: any[] }) {
     setTo(d.to)
   }
 
+  const totalBooked = filtered.reduce((s: number, d: any) => s + (d.booked || 0), 0)
+
+  function fmtHa(v: number) {
+    return v >= 1000 ? `${(v / 1000).toFixed(1)}k ha` : `${v.toFixed(0)} ha`
+  }
+
   return (
     <div>
       <MonthRangeControls from={from} to={to} onFrom={setFrom} onTo={setTo} onClear={handleClear} />
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
         <HighlightMetric
           label="% Utilisation"
           value={utilisationPct === '—' ? '—' : `${utilisationPct}%`}
           color={utilisationPct !== '—' ? utilisationColor : undefined}
         />
+        <HighlightMetric label="Covenant Target" value={totalCovenant > 0 ? fmtHa(totalCovenant) : '—'} color="var(--text-secondary)" />
+        <HighlightMetric label="Booked" value={totalBooked > 0 ? fmtHa(totalBooked) : '—'} color="#8b5cf6" />
+        <HighlightMetric label="Worked" value={totalWorked > 0 ? fmtHa(totalWorked) : '—'} color="#10b981" />
       </div>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={filtered} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%" barGap={2}>
@@ -193,12 +202,21 @@ function CollectionsTrendChart({ data }: { data: any[] }) {
     setTo(d.to)
   }
 
+  function fmtPaid(v: number) {
+    return v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(2)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(1)}k` : `$${v.toFixed(0)}`
+  }
+  function fmtHa2(v: number) {
+    return v >= 1000 ? `${(v / 1000).toFixed(1)}k ha` : `${v.toFixed(0)} ha`
+  }
+
   return (
     <div>
       <MonthRangeControls from={from} to={to} onFrom={setFrom} onTo={setTo} onClear={handleClear} />
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
         <HighlightMetric label="Implied $/ha" value={impliedPerHa !== '—' ? `$${impliedPerHa}` : '—'} color="var(--accent)" />
         <HighlightMetric label="Repayment Rate" value={repaymentRate !== '—' ? `${repaymentRate}%` : '—'} color={rateColor} />
+        <HighlightMetric label="Total Paid" value={totalPaid > 0 ? fmtPaid(totalPaid) : '—'} color="#f59e0b" />
+        <HighlightMetric label="Worked" value={totalWorked > 0 ? fmtHa2(totalWorked) : '—'} color="#10b981" />
       </div>
       <ResponsiveContainer width="100%" height={200}>
         <ComposedChart data={filtered} margin={{ top: 4, right: 50, left: 0, bottom: 0 }}>

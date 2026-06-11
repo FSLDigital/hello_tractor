@@ -3,6 +3,7 @@ import { loadData, getCropConcentration, getFilterOptions } from '@/lib/data'
 import { PageHeader, KpiCard, Card, CardTitle, Grid } from '@/components/ui'
 import CommodityCharts from '@/components/CommodityCharts'
 import FilterBar from '@/components/FilterBar'
+import FootnotesPanel, { COMMODITY_METRICS } from '@/components/FootnotesPanel'
 
 
 export default async function CommodityPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
@@ -151,6 +152,8 @@ export default async function CommodityPage({ searchParams }: { searchParams: Pr
           </table>
         </Card>
       </div>
+
+      <FootnotesPanel metrics={COMMODITY_METRICS} />
     </div>
   )
 }

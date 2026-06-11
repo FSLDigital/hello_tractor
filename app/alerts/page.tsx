@@ -2,6 +2,7 @@ import { loadData, getAlerts, buildAlertContext } from '@/lib/data'
 import { PageHeader, Card, CardTitle } from '@/components/ui'
 import AlertsConfig from '@/components/AlertsConfig'
 import AlertsLog from '@/components/AlertsLog'
+import FootnotesPanel, { ALERTS_METRICS } from '@/components/FootnotesPanel'
 
 export default function AlertsPage() {
   const data = loadData()
@@ -21,6 +22,8 @@ export default function AlertsPage() {
         <CardTitle>Alert rule builder</CardTitle>
         <AlertsConfig />
       </Card>
+
+      <FootnotesPanel metrics={ALERTS_METRICS} />
     </div>
   )
 }

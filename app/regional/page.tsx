@@ -4,6 +4,7 @@ import { PageHeader, KpiCard, Card, CardTitle, Grid } from '@/components/ui'
 import RegionalCharts from '@/components/RegionalCharts'
 import RegionalTrendCard from '@/components/RegionalTrendCard'
 import FilterBar from '@/components/FilterBar'
+import FootnotesPanel, { REGIONAL_METRICS } from '@/components/FootnotesPanel'
 
 const COUNTRY_CC: Record<string, string> = { Kenya:'KE', Nigeria:'NG', Ethiopia:'ET', Uganda:'UG', Rwanda:'RW' }
 const COUNTRY_FULL: Record<string, string> = { KE:'Kenya', NG:'Nigeria', ET:'Ethiopia', UG:'Uganda', RW:'Rwanda' }
@@ -281,6 +282,8 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
           </table>
         </Card>
       </div>
+
+      <FootnotesPanel metrics={REGIONAL_METRICS} />
     </div>
   )
 }

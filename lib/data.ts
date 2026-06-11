@@ -224,6 +224,12 @@ export function getPortfolioStats(data: DashboardData, filters?: HTFilters) {
     byCountry[c].owed += tractorExposureUSD(meta, fxRates, now)
   }
 
+  for (const r of perf) {
+    const c = r.country || 'Unknown'
+    if (!byCountry[c]) byCountry[c] = { owed: 0, paid: 0, tractors: new Set() }
+    byCountry[c].paid += toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates)
+  }
+
   const totalPaid = perf.reduce((s, r) => s + toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates), 0)
   const totalOwed = Object.values(byCountry).reduce((s, v) => s + v.owed, 0)
   const repaymentRate = totalOwed > 0 ? (totalPaid / totalOwed) * 100 : 0

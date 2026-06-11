@@ -4,7 +4,7 @@ import { PageHeader, KpiCard, Card, CardTitle, TierBadge, Grid } from '@/compone
 import CommandCharts from '@/components/CommandCharts'
 import FilterBar from '@/components/FilterBar'
 import AlertPanel from '@/components/AlertPanel'
-import FootnotesPanel from '@/components/FootnotesPanel'
+import FootnotesPanel, { COMMAND_CENTRE_METRICS } from '@/components/FootnotesPanel'
 
 function fmtUSD(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`
@@ -207,7 +207,7 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
           </table>
         </Card>
       </div>
-      <FootnotesPanel />
+      <FootnotesPanel metrics={COMMAND_CENTRE_METRICS} />
     </div>
   )
 }

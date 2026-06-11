@@ -5,6 +5,7 @@ import FXCharts from '@/components/FXCharts'
 import FXVaR from '@/components/FXVaR'
 import FXBaseDatePicker from '@/components/FXBaseDatePicker'
 import DSCRCharts from '@/components/DSCRCharts'
+import FootnotesPanel, { FX_METRICS } from '@/components/FootnotesPanel'
 
 export default async function FXPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const sp = await searchParams
@@ -280,6 +281,8 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
         <CardTitle>Currency trends & FX correlation</CardTitle>
         <FXCharts type="fx-trends-heatmap" data={fxSeries} />
       </Card>
+
+      <FootnotesPanel metrics={FX_METRICS} />
     </div>
   )
 }
