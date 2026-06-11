@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+credentials.json
+client_secret_*.json
+__pycache__/
+*.py[cod]
 
 # debug
 npm-debug.log*

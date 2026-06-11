@@ -141,6 +141,26 @@ export interface AlertContext {
   }
 }
 
+export interface DSCRRow {
+  period: string
+  cash: number
+  short_term_debt: number
+  long_term_debt: number
+  shareholders_equity: number
+  ebit: number
+  ebitda: number
+  interest_expense: number
+  principal_repayments: number
+  net_debt: number | null
+  total_debt: number | null
+  debt_to_equity: number | null
+  interest_coverage: number | null
+  dscr: number | null
+  cfads: number | null
+  discount_rate: number | null
+  llcr?: number
+}
+
 export interface DashboardData {
   fx: FXRate[]
   repayments: Repayment[]
@@ -150,4 +170,5 @@ export interface DashboardData {
   weather: WeatherForecast[]
   seasonality: SeasonalityIndex[]
   htPerformance: HTPerformance[]
+  dscr: DSCRRow[]
 }

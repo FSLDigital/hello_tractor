@@ -1,9 +1,10 @@
 import { Suspense } from 'react'
-import { loadData, getFXSeries, getWACF, getALMData, getALMHistorical, getALMForecastBase } from '@/lib/data'
-import { PageHeader, KpiCard, Card, CardTitle, Grid } from '@/components/ui'
+import { loadData, getFXSeries, getWACF, getALMData, getALMHistorical, getALMForecastBase, getExposureByCurrency, getDSCRMetrics } from '@/lib/data'
+import { PageHeader, KpiCard, Card, CardTitle, Grid, SectionDivider } from '@/components/ui'
 import FXCharts from '@/components/FXCharts'
 import FXVaR from '@/components/FXVaR'
 import FXBaseDatePicker from '@/components/FXBaseDatePicker'
+import DSCRCharts from '@/components/DSCRCharts'
 
 export default async function FXPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const sp = await searchParams
@@ -15,6 +16,7 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
   const almData = getALMData(data)
   const almHistorical = getALMHistorical(data)
   const almForecastBase = getALMForecastBase(data)
+  const { rows: dscrRows, latest: dscrLatest } = getDSCRMetrics(data)
 
   const currencies = ['KES', 'NGN', 'ETB', 'UGX', 'RWF']
   const currencyNames: Record<string, string> = { KES: 'Kenyan Shilling', NGN: 'Nigerian Naira', ETB: 'Ethiopian Birr', UGX: 'Ugandan Shilling', RWF: 'Rwandan Franc' }
@@ -76,23 +78,7 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
     fxMonthlyRates[c] = [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v.rate)
   }
 
-  // VaR exposure: tractor covenants outstanding, deduplicated by most recent entry per tractor
-  const COUNTRY_CCY: Record<string, string> = { Kenya:'KES', Nigeria:'NGN', Ethiopia:'ETB', Uganda:'UGX', Rwanda:'RWF' }
-  const tractorLatest = new Map<string, typeof data.htPerformance[0]>()
-  for (const r of data.htPerformance) {
-    const id = String(r.tractor_id ?? '')
-    if (!id || id === 'null' || id === 'undefined') continue
-    const existing = tractorLatest.get(id)
-    if (!existing) { tractorLatest.set(id, r); continue }
-    const eScore = (existing.year || 0) * 100 + (existing.month_num || 0)
-    const nScore = (r.year || 0) * 100 + (r.month_num || 0)
-    if (nScore > eScore) tractorLatest.set(id, r)
-  }
-  const exposureByFXCurrency: Record<string, number> = {}
-  for (const r of tractorLatest.values()) {
-    const ccy = COUNTRY_CCY[r.country || '']
-    if (ccy) exposureByFXCurrency[ccy] = (exposureByFXCurrency[ccy] || 0) + (Number(r.expected_collection) || 0)
-  }
+  const exposureByFXCurrency = getExposureByCurrency(data)
 
   const activeRepayments = data.repayments.filter(r => r.status === 'ACTIVE')
   const uniqueFacilities = [...new Map(activeRepayments.map(r => [r.facility_id, r])).values()]
@@ -113,6 +99,12 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
   const uniqueKES = [...new Map(activeRepayments.filter(r => r.currency_code === 'KES').map(r => [r.facility_id, r])).values()].reduce((s, r) => s + r.outstanding_usd, 0)
   const uniqueUSD = [...new Map(activeRepayments.filter(r => r.currency_code === 'USD').map(r => [r.facility_id, r])).values()].reduce((s, r) => s + r.outstanding_usd, 0)
 
+  // Exposure-weighted FX change across all portfolio currencies (+ve = depreciated vs USD)
+  const totalLocalExposure = currencies.reduce((s, c) => s + (exposureByFXCurrency[c] || 0), 0)
+  const weightedFXChange = totalLocalExposure > 0
+    ? currencies.reduce((s, c) => s + (fxStats.find(f => f.code === c)?.change || 0) * (exposureByFXCurrency[c] || 0), 0) / totalLocalExposure
+    : 0
+
   const fxMinDate = fxSeries[0]?.date as string | undefined
   const fxMaxDate = fxSeries[fxSeries.length - 1]?.date as string | undefined
 
@@ -130,7 +122,12 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
         <KpiCard label="KES Facility Exposure" value={`$${(uniqueKES / 1e6).toFixed(2)}M`} sub="ABSA + FSD · 11.66% / 0%" color="var(--text-primary)" />
         <KpiCard label="USD Facility Exposure" value={`$${(uniqueUSD / 1e6).toFixed(2)}M`} sub="KUZA · 6.00%" color="var(--text-primary)" />
         <KpiCard label="Wtd. Avg. Cost of Funding" value={`${wacf.toFixed(2)}%`} sub={`$${(totalOutstanding / 1e6).toFixed(2)}M outstanding`} color={wacf > 10 ? 'var(--red)' : wacf > 6 ? 'var(--amber)' : 'var(--green)'} trend="Null rates treated as 0%" />
-        <KpiCard label="NGN Depreciation (since Jan 22)" value={`${fxStats.find(f => f.code === 'NGN')?.change.toFixed(1)}%`} sub="Cumulative depreciation" color="var(--red)" />
+        <KpiCard
+          label={`Wtd. portfolio FX shift (${changeColLabel})`}
+          value={`${weightedFXChange >= 0 ? '+' : ''}${weightedFXChange.toFixed(1)}%`}
+          sub="Exposure-wtd. across 5 currencies · +ve = weakened vs USD"
+          color={weightedFXChange > 10 ? 'var(--red)' : weightedFXChange > 0 ? 'var(--amber)' : 'var(--green)'}
+        />
       </div>
 
       {/* Per-currency exchange rate cards with 12-mo change */}
@@ -170,8 +167,55 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
             <FXCharts type="alm-historical" data={almHistorical} />
           </Card>
           <Card>
-            <CardTitle>Projected future inflows vs repayments (USD)</CardTitle>
+            <CardTitle>Projected future inflows vs repayments — seasonality-adjusted (USD)</CardTitle>
             <FXCharts type="alm-forecast" data={almForecastBase} />
+          </Card>
+        </Grid>
+      </div>
+
+      {/* DSCR / LLCR section */}
+      <SectionDivider label="Debt Service & Coverage Metrics" />
+
+      {/* DSCR KPI cards */}
+      {dscrLatest && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '16px' }}>
+          <KpiCard
+            label={`DSCR · ${dscrLatest.period}`}
+            value={dscrLatest.dscr != null ? `${Number(dscrLatest.dscr).toFixed(2)}x` : '—'}
+            sub="EBITDA / (Interest + Principal)"
+            color={Number(dscrLatest.dscr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.dscr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`LLCR · ${dscrLatest.period}`}
+            value={dscrLatest.llcr != null ? `${Number(dscrLatest.llcr).toFixed(2)}x` : '—'}
+            sub="NPV(CFADS remaining) / Total Debt"
+            color={Number(dscrLatest.llcr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.llcr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`Interest Coverage · ${dscrLatest.period}`}
+            value={dscrLatest.interest_coverage != null ? `${Number(dscrLatest.interest_coverage).toFixed(2)}x` : '—'}
+            sub="EBIT / Interest Expense"
+            color={Number(dscrLatest.interest_coverage) >= 3.0 ? 'var(--green)' : Number(dscrLatest.interest_coverage) >= 2.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`D/E Ratio · ${dscrLatest.period}`}
+            value={dscrLatest.debt_to_equity != null ? `${Number(dscrLatest.debt_to_equity).toFixed(2)}x` : '—'}
+            sub="(STD + LTD) / Shareholders Equity"
+            color={Number(dscrLatest.debt_to_equity) <= 1.0 ? 'var(--green)' : Number(dscrLatest.debt_to_equity) <= 2.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+        </div>
+      )}
+
+      {/* DSCR/LLCR + Leverage time series side by side */}
+      <div style={{ marginBottom: '24px' }}>
+        <Grid cols={2} gap={16}>
+          <Card>
+            <CardTitle>DSCR — debt service coverage over loan life (projected)</CardTitle>
+            <DSCRCharts type="dscr-llcr" rows={dscrRows} />
+          </Card>
+          <Card>
+            <CardTitle>Interest coverage & debt/equity — leverage trajectory (projected)</CardTitle>
+            <DSCRCharts type="leverage" rows={dscrRows} />
           </Card>
         </Grid>
       </div>

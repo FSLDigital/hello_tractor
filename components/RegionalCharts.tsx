@@ -35,7 +35,10 @@ export default function RegionalCharts({ type, data, visibleCodes }: {
                   <div style={{ color: '#7a8a9e', fontFamily: 'DM Mono, monospace' }}>Political Risk: {d.political}</div>
                   <div style={{ color: '#7a8a9e', fontFamily: 'DM Mono, monospace' }}>Drought Risk: {d.drought}</div>
                   <div style={{ color: '#7a8a9e', fontFamily: 'DM Mono, monospace', marginTop: '4px', paddingTop: '4px', borderTop: '0.5px solid rgba(255,255,255,0.08)' }}>
-                    Tractors at risk: {d.size.toLocaleString()}
+                    Tractors at risk: {(d.tractorsAtRisk ?? d.size).toLocaleString()}
+                  </div>
+                  <div style={{ color: '#7a8a9e', fontFamily: 'DM Mono, monospace' }}>
+                    Total tractors: {(d.totalTractors ?? d.size).toLocaleString()}
                   </div>
                   <div style={{ color: '#f97316', fontFamily: 'DM Mono, monospace' }}>
                     $ Exposure: {formatUSD(d.exposure)}
@@ -53,13 +56,16 @@ export default function RegionalCharts({ type, data, visibleCodes }: {
   }
 
   if (type === 'pol-trend') {
-    const sampled = data.filter((_, i) => i % 3 === 0)
+    const tickInterval = Math.max(1, Math.floor(data.length / 6))
+    const allScores = data.flatMap(d => CODES.map(c => d[c]).filter((v): v is number => typeof v === 'number'))
+    const minScore = allScores.length ? Math.floor(Math.min(...allScores) / 5) * 5 - 5 : 15
+    const maxScore = allScores.length ? Math.ceil(Math.max(...allScores) / 5) * 5 + 5 : 85
     return (
       <ResponsiveContainer width="100%" height={260}>
-        <LineChart data={sampled} margin={{ top: 4, right: 20, left: 0, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 4, right: 20, left: 0, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#7a8a9e', fontFamily: 'DM Mono, monospace' }} tickLine={false} axisLine={false} interval={5} />
-          <YAxis tick={{ fontSize: 10, fill: '#7a8a9e', fontFamily: 'DM Mono, monospace' }} tickLine={false} axisLine={false} domain={[15, 80]} width={30} />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#7a8a9e', fontFamily: 'DM Mono, monospace' }} tickLine={false} axisLine={false} interval={tickInterval} />
+          <YAxis tick={{ fontSize: 10, fill: '#7a8a9e', fontFamily: 'DM Mono, monospace' }} tickLine={false} axisLine={false} domain={[minScore, maxScore]} width={30} />
           <Tooltip contentStyle={{ background: '#1a2434', border: '0.5px solid rgba(255,255,255,0.12)', borderRadius: '8px', fontSize: '12px' }} />
           <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '12px' }} />
           {CODES.map(c => (

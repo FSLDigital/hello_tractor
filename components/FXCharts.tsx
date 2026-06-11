@@ -40,12 +40,9 @@ function pearson(xs: number[], ys: number[]): number {
 
 function heatColor(r: number, isDiag: boolean): string {
   if (isDiag) return 'rgba(255,255,255,0.04)'
-  if (r >= 0.8) return 'rgba(220,38,38,0.60)'
-  if (r >= 0.6) return 'rgba(239,68,68,0.40)'
-  if (r >= 0.3) return 'rgba(239,68,68,0.20)'
-  if (r >= -0.3) return 'rgba(255,255,255,0.04)'
-  if (r >= -0.6) return 'rgba(34,197,94,0.22)'
-  return 'rgba(34,197,94,0.45)'
+  const opacity = Math.abs(r)
+  if (r > 0) return `rgba(34,197,94,${(opacity * 0.75).toFixed(2)})`
+  return `rgba(239,68,68,${(opacity * 0.75).toFixed(2)})`
 }
 
 function DateRangeControls({ from, to, min, max, onFrom, onTo, onReset }: {
@@ -63,9 +60,9 @@ function DateRangeControls({ from, to, min, max, onFrom, onTo, onReset }: {
   )
 }
 
-function QuarterRangeControls({ quarters, fromQ, toQ, onFrom, onTo }: {
+function QuarterRangeControls({ quarters, fromQ, toQ, onFrom, onTo, onReset }: {
   quarters: string[]; fromQ: string; toQ: string
-  onFrom: (v: string) => void; onTo: (v: string) => void
+  onFrom: (v: string) => void; onTo: (v: string) => void; onReset: () => void
 }) {
   return (
     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '10px', flexWrap: 'wrap' }}>
@@ -77,7 +74,7 @@ function QuarterRangeControls({ quarters, fromQ, toQ, onFrom, onTo }: {
       <select value={toQ} onChange={e => onTo(e.target.value)} style={INPUT_STYLE}>
         {quarters.map((q: string) => <option key={q} value={q}>{q}</option>)}
       </select>
-      <button onClick={() => { onFrom(quarters[0] || ''); onTo(quarters[quarters.length - 1] || '') }} style={{ ...INPUT_STYLE, color: 'var(--text-muted)', padding: '4px 10px' }}>Reset</button>
+      <button onClick={onReset} style={{ ...INPUT_STYLE, color: 'var(--text-muted)', padding: '4px 10px' }}>Reset</button>
     </div>
   )
 }
@@ -168,10 +165,14 @@ function ALMWaterfallChart({ data }: { data: any[] }) {
   )
 }
 
+const ALM_WINDOW = 8
+
 function ALMHistoricalChart({ data }: { data: any[] }) {
   const quarters = useMemo(() => data.map((d: any) => d.q), [data])
-  const [fromQ, setFromQ] = useState<string>(() => quarters[0] || '')
-  const [toQ, setToQ] = useState<string>(() => quarters[quarters.length - 1] || '')
+  const defaultFrom = () => quarters[Math.max(0, quarters.length - ALM_WINDOW)] || ''
+  const defaultTo = () => quarters[quarters.length - 1] || ''
+  const [fromQ, setFromQ] = useState<string>(defaultFrom)
+  const [toQ, setToQ] = useState<string>(defaultTo)
 
   const filtered = useMemo(() => {
     const fi = quarters.indexOf(fromQ)
@@ -188,6 +189,7 @@ function ALMHistoricalChart({ data }: { data: any[] }) {
         toQ={toQ}
         onFrom={setFromQ}
         onTo={setToQ}
+        onReset={() => { setFromQ(defaultFrom()); setToQ(defaultTo()) }}
       />
       <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', paddingLeft: '4px' }}>
         {[['#10b981', 'Actual collections (USD)'], ['#ef4444', 'Funding repayments (USD)']].map(([color, label]) => (
@@ -217,8 +219,10 @@ function ALMHistoricalChart({ data }: { data: any[] }) {
 function ALMForecastChart({ data }: { data: any[] }) {
   const [repaymentRate, setRepaymentRate] = useState(70)
   const quarters = useMemo(() => data.map((d: any) => d.q), [data])
-  const [fromQ, setFromQ] = useState<string>(() => quarters[0] || '')
-  const [toQ, setToQ] = useState<string>(() => quarters[quarters.length - 1] || '')
+  const defaultFrom = () => quarters[0] || ''
+  const defaultTo = () => quarters[Math.min(ALM_WINDOW - 1, quarters.length - 1)] || ''
+  const [fromQ, setFromQ] = useState<string>(defaultFrom)
+  const [toQ, setToQ] = useState<string>(defaultTo)
 
   const filtered = useMemo(() => {
     const fi = quarters.indexOf(fromQ)
@@ -235,27 +239,26 @@ function ALMForecastChart({ data }: { data: any[] }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '13px', fontWeight: 600, fontFamily: 'DM Mono, monospace', color: 'var(--text-primary)', minWidth: '48px' }}>{repaymentRate}%</span>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>Repay rate</span>
+        <span style={{ fontSize: '11px', fontWeight: 600, fontFamily: 'DM Mono, monospace', color: 'var(--text-primary)', minWidth: '32px' }}>{repaymentRate}%</span>
         <input
-          type="range"
-          min={0}
-          max={100}
-          value={repaymentRate}
+          type="range" min={0} max={100} value={repaymentRate}
           onChange={e => setRepaymentRate(Number(e.target.value))}
-          style={{ accentColor: '#8b5cf6', flex: 1, maxWidth: '160px' }}
+          style={{ accentColor: '#8b5cf6', width: '100px' }}
         />
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>repayment rate</span>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>From</span>
+        <select value={fromQ} onChange={e => setFromQ(e.target.value)} style={INPUT_STYLE}>
+          {quarters.map((q: string) => <option key={q} value={q}>{q}</option>)}
+        </select>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>To</span>
+        <select value={toQ} onChange={e => setToQ(e.target.value)} style={INPUT_STYLE}>
+          {quarters.map((q: string) => <option key={q} value={q}>{q}</option>)}
+        </select>
+        <button onClick={() => { setFromQ(defaultFrom()); setToQ(defaultTo()) }} style={{ ...INPUT_STYLE, color: 'var(--text-muted)', padding: '4px 10px' }}>Reset</button>
       </div>
-      <QuarterRangeControls
-        quarters={quarters}
-        fromQ={fromQ}
-        toQ={toQ}
-        onFrom={setFromQ}
-        onTo={setToQ}
-      />
       <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', paddingLeft: '4px' }}>
-        {[['#10b981', 'Projected inflows (covenant × seasonality × rate)'], ['#ef4444', 'Scheduled repayments (USD)']].map(([color, label]) => (
+        {[['#10b981', 'Projected inflows (covenant × repayment rate × seasonality)'], ['#ef4444', 'Scheduled repayments (USD)']].map(([color, label]) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: color }} />
             <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>{label}</span>
@@ -269,7 +272,7 @@ function ALMForecastChart({ data }: { data: any[] }) {
           <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} width={56} />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
-            formatter={(v: any, name: any) => [`$${Number(v).toLocaleString()}`, name === 'inflows' ? 'Projected inflows (covenant × seasonality × rate)' : 'Scheduled repayments (USD)']}
+            formatter={(v: any, name: any) => [`$${Number(v).toLocaleString()}`, name === 'inflows' ? 'Projected inflows (covenant × repayment rate × seasonality)' : 'Scheduled repayments (USD)']}
           />
           <Bar dataKey="inflows" name="inflows" fill="#10b981" radius={[3, 3, 0, 0]} />
           <Bar dataKey="outflows" name="outflows" fill="#ef4444" radius={[3, 3, 0, 0]} />
@@ -362,7 +365,7 @@ function FXTrendsHeatmap({ data }: { data: any[] }) {
       </div>
 
       <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        FX correlation vs USD (period-over-period changes) — red = co-movement · green = divergence
+        FX correlation vs USD (period-over-period changes) — green = positive · red = negative · opacity = magnitude
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(5, 1fr)', gap: '4px' }}>
         <div />

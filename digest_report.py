@@ -61,11 +61,22 @@ _openai = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 # ── Data Loading ──────────────────────────────────────────────────────────────
 
+_PERF_COL_MAP = {
+    "country":                  "Country",
+    "tractor_id":               "Tractor ID",
+    "expected_collection":      "Amount Owed",
+    "actual_collection":        "Amount Paid",
+    "monthly_covenant_target":  "Covenant Targets",
+    "monthly_area_serviced":    "Worked Acres",
+}
+
+
 def _load_sheets() -> dict[str, pd.DataFrame]:
     xls    = pd.ExcelFile(DATA_PATH)
     sheets = {name: xls.parse(name) for name in xls.sheet_names}
     perf   = sheets.get("HT_Performance")
     if perf is not None:
+        perf = perf.rename(columns={k: v for k, v in _PERF_COL_MAP.items() if k in perf.columns})
         for col in ["Amount Owed", "Amount Paid", "Worked Acres", "Covenant Targets"]:
             if col in perf.columns:
                 perf[col] = pd.to_numeric(perf[col], errors="coerce").fillna(0)
@@ -99,7 +110,8 @@ def _portfolio_stats(perf: pd.DataFrame) -> dict:
     by_country = (
         perf.groupby("Country")
         .agg(owed=("Amount Owed", "sum"), paid=("Amount Paid", "sum"),
-             tractors=("Tractor ID", "nunique"))
+             tractors=("Tractor ID", "nunique"),
+             currency=("currency_code", "first"))
         .reset_index()
     )
     by_country["repayment_rate"] = (

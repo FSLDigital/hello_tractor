@@ -1,13 +1,21 @@
 'use client'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import RegionalCharts from './RegionalCharts'
 
 const ALL_CODES = ['ET', 'NG', 'KE', 'UG', 'RW']
 const CODE_LABELS: Record<string, string> = { ET: 'Ethiopia', NG: 'Nigeria', KE: 'Kenya', UG: 'Uganda', RW: 'Rwanda' }
 const COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#ff2d55', UG: '#8b5cf6', RW: '#10b981' }
 
+const INPUT_STYLE: React.CSSProperties = {
+  background: 'var(--bg-raised)', border: '0.5px solid var(--border)', borderRadius: '6px',
+  color: 'var(--text-primary)', fontSize: '11px', fontFamily: 'DM Mono, monospace',
+  padding: '4px 8px', colorScheme: 'dark' as any, outline: 'none',
+}
+
 export default function RegionalTrendCard({ type, data }: { type: string; data: any[] }) {
   const [visible, setVisible] = useState<string[]>(ALL_CODES)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
 
   const toggle = (code: string) => {
     setVisible(prev =>
@@ -17,9 +25,16 @@ export default function RegionalTrendCard({ type, data }: { type: string; data: 
     )
   }
 
+  const filtered = useMemo(() =>
+    data.filter(d => (!from || d.date >= from) && (!to || d.date <= to)),
+    [data, from, to]
+  )
+
+  const showDateFilter = type === 'pol-trend' || type === 'weather-trend'
+
   return (
     <>
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
         {ALL_CODES.map(code => {
           const active = visible.includes(code)
           return (
@@ -42,8 +57,24 @@ export default function RegionalTrendCard({ type, data }: { type: string; data: 
             </button>
           )
         })}
+
+        {showDateFilter && (
+          <>
+            <div style={{ width: '0.5px', height: '16px', background: 'var(--border)', margin: '0 2px' }} />
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>From</span>
+            <input type="month" value={from} onChange={e => setFrom(e.target.value)} style={INPUT_STYLE} />
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</span>
+            <input type="month" value={to} onChange={e => setTo(e.target.value)} style={INPUT_STYLE} />
+            {(from || to) && (
+              <button
+                onClick={() => { setFrom(''); setTo('') }}
+                style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: '6px', color: 'var(--text-muted)', fontSize: '10px', fontFamily: 'DM Mono, monospace', padding: '4px 8px', cursor: 'pointer' }}
+              >✕</button>
+            )}
+          </>
+        )}
       </div>
-      <RegionalCharts type={type} data={data} visibleCodes={visible} />
+      <RegionalCharts type={type} data={filtered} visibleCodes={visible} />
     </>
   )
 }

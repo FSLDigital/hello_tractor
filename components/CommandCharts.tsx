@@ -1,5 +1,5 @@
 'use client'
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Legend, ComposedChart, Line } from 'recharts'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f97316']
@@ -58,6 +58,29 @@ function CollectionsTooltip({ active, payload, label }: any) {
   )
 }
 
+const INPUT_STYLE: React.CSSProperties = {
+  background: 'var(--bg-raised)', border: '0.5px solid var(--border)', borderRadius: '6px',
+  color: 'var(--text-primary)', fontSize: '11px', fontFamily: 'DM Mono, monospace',
+  padding: '4px 8px', colorScheme: 'dark' as any, outline: 'none',
+}
+
+function MonthRangeControls({ from, to, onFrom, onTo, onClear }: {
+  from: string; to: string
+  onFrom: (v: string) => void; onTo: (v: string) => void; onClear: () => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>From</span>
+      <input type="month" value={from} onChange={e => onFrom(e.target.value)} style={INPUT_STYLE} />
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</span>
+      <input type="month" value={to} onChange={e => onTo(e.target.value)} style={INPUT_STYLE} />
+      {(from || to) && (
+        <button onClick={onClear} style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: '6px', color: 'var(--text-muted)', fontSize: '10px', fontFamily: 'DM Mono, monospace', padding: '4px 8px', cursor: 'pointer' }}>✕</button>
+      )}
+    </div>
+  )
+}
+
 interface Props {
   type: 'exposure-donut' | 'repayments' | 'utilisation-trend' | 'collections-trend'
   data: any[]
@@ -90,6 +113,110 @@ function normaliseDMY(d: string): string {
   if (parts.length !== 3) return d
   const [day, month, year] = parts
   return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`
+}
+
+function defaultLast12(data: any[]): { from: string; to: string } {
+  const keys = data.map((d: any) => d.key as string).filter(Boolean).sort()
+  if (!keys.length) return { from: '', to: '' }
+  const to = keys[keys.length - 1]
+  const toDate = new Date(to + '-01')
+  toDate.setMonth(toDate.getMonth() - 11)
+  const from = `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, '0')}`
+  return { from, to }
+}
+
+function UtilisationTrendChart({ data }: { data: any[] }) {
+  const [from, setFrom] = useState(() => defaultLast12(data).from)
+  const [to, setTo] = useState(() => defaultLast12(data).to)
+
+  const filtered = useMemo(() =>
+    data.filter((d: any) => (!from || d.key >= from) && (!to || d.key <= to)),
+    [data, from, to]
+  )
+
+  const totalCovenant = filtered.reduce((s: number, d: any) => s + (d.covenant || 0), 0)
+  const totalWorked = filtered.reduce((s: number, d: any) => s + (d.worked || 0), 0)
+  const utilisationPct = totalCovenant > 0 ? ((totalWorked / totalCovenant) * 100).toFixed(1) : '—'
+  const utilisationColor = parseFloat(utilisationPct) >= 80 ? 'var(--green)' : parseFloat(utilisationPct) >= 50 ? 'var(--amber)' : 'var(--red)'
+
+  function handleClear() {
+    const d = defaultLast12(data)
+    setFrom(d.from)
+    setTo(d.to)
+  }
+
+  return (
+    <div>
+      <MonthRangeControls from={from} to={to} onFrom={setFrom} onTo={setTo} onClear={handleClear} />
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+        <HighlightMetric
+          label="% Utilisation"
+          value={utilisationPct === '—' ? '—' : `${utilisationPct}%`}
+          color={utilisationPct !== '—' ? utilisationColor : undefined}
+        />
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={filtered} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%" barGap={2}>
+          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={40} />
+          <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} width={44} />
+          <Tooltip content={<UtilisationTooltip />} />
+          <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '8px' }} formatter={(v: string) => ({ covenant: 'Covenant', booked: 'Booked', worked: 'Worked ha' }[v] || v)} />
+          <Bar dataKey="covenant" fill="#3b82f6" radius={[2, 2, 0, 0]} name="covenant" />
+          <Bar dataKey="booked" fill="#8b5cf6" radius={[2, 2, 0, 0]} name="booked" />
+          <Bar dataKey="worked" fill="#10b981" radius={[2, 2, 0, 0]} name="worked" />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function CollectionsTrendChart({ data }: { data: any[] }) {
+  const [from, setFrom] = useState(() => defaultLast12(data).from)
+  const [to, setTo] = useState(() => defaultLast12(data).to)
+
+  const filtered = useMemo(() =>
+    data.filter((d: any) => (!from || d.key >= from) && (!to || d.key <= to)),
+    [data, from, to]
+  )
+
+  const totalWorked = filtered.reduce((s: number, d: any) => s + (d.worked || 0), 0)
+  const totalPaid = filtered.reduce((s: number, d: any) => s + (d.paid || 0), 0)
+  const totalOwed = filtered.reduce((s: number, d: any) => s + (d.owed || 0), 0)
+  const impliedPerHa = totalWorked > 0 ? (totalPaid / totalWorked).toFixed(2) : '—'
+  const repaymentRate = totalOwed > 0 ? ((totalPaid / totalOwed) * 100).toFixed(1) : '—'
+  const rateColor = repaymentRate !== '—' ? (parseFloat(repaymentRate) >= 70 ? 'var(--green)' : parseFloat(repaymentRate) >= 40 ? 'var(--amber)' : 'var(--red)') : undefined
+
+  function handleClear() {
+    const d = defaultLast12(data)
+    setFrom(d.from)
+    setTo(d.to)
+  }
+
+  return (
+    <div>
+      <MonthRangeControls from={from} to={to} onFrom={setFrom} onTo={setTo} onClear={handleClear} />
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+        <HighlightMetric label="Implied $/ha" value={impliedPerHa !== '—' ? `$${impliedPerHa}` : '—'} color="var(--accent)" />
+        <HighlightMetric label="Repayment Rate" value={repaymentRate !== '—' ? `${repaymentRate}%` : '—'} color={rateColor} />
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <ComposedChart data={filtered} margin={{ top: 4, right: 50, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={40} />
+          <YAxis yAxisId="left" tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} width={44} label={{ value: 'ha', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#7a8a9e' } }} />
+          <YAxis yAxisId="right" orientation="right" tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} width={48} />
+          <Tooltip content={<CollectionsTooltip />} />
+          <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '8px' }} formatter={(v: string) => ({ worked: 'Worked ha', paid: 'Amount Paid' }[v] || v)} />
+          <Bar yAxisId="left" dataKey="worked" fill="#10b981" radius={[2, 2, 0, 0]} name="worked" />
+          <Line yAxisId="right" type="monotone" dataKey="paid" stroke="#f59e0b" strokeWidth={2} dot={false} name="paid" />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', marginTop: '4px', paddingLeft: '4px' }}>
+        Bars = worked ha (left axis) · Line = amount paid (right axis)
+      </div>
+    </div>
+  )
 }
 
 export default function CommandCharts({ type, data }: Props) {
@@ -147,77 +274,11 @@ export default function CommandCharts({ type, data }: Props) {
   }
 
   if (type === 'utilisation-trend') {
-    // Compute highlight: % utilisation for the visible period
-    const totalCovenant = data.reduce((s: number, d: any) => s + (d.covenant || 0), 0)
-    const totalWorked = data.reduce((s: number, d: any) => s + (d.worked || 0), 0)
-    const utilisationPct = totalCovenant > 0 ? ((totalWorked / totalCovenant) * 100).toFixed(1) : '—'
-    const utilisationColor = parseFloat(utilisationPct) >= 80 ? 'var(--green)' : parseFloat(utilisationPct) >= 50 ? 'var(--amber)' : 'var(--red)'
-
-    return (
-      <div>
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
-          <HighlightMetric
-            label="% Utilisation"
-            value={utilisationPct === '—' ? '—' : `${utilisationPct}%`}
-            color={utilisationPct !== '—' ? utilisationColor : undefined}
-          />
-        </div>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%" barGap={2}>
-            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={40} />
-            <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} width={44} />
-            <Tooltip content={<UtilisationTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '8px' }} formatter={(v: string) => ({ covenant: 'Covenant', booked: 'Booked', worked: 'Worked ha' }[v] || v)} />
-            <Bar dataKey="covenant" fill="#3b82f6" radius={[2, 2, 0, 0]} name="covenant" />
-            <Bar dataKey="booked" fill="#8b5cf6" radius={[2, 2, 0, 0]} name="booked" />
-            <Bar dataKey="worked" fill="#10b981" radius={[2, 2, 0, 0]} name="worked" />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    )
+    return <UtilisationTrendChart data={data} />
   }
 
   if (type === 'collections-trend') {
-    // Compute highlight metrics across the 12-month window
-    const totalWorked = data.reduce((s: number, d: any) => s + (d.worked || 0), 0)
-    const totalPaid = data.reduce((s: number, d: any) => s + (d.paid || 0), 0)
-    const totalOwed = data.reduce((s: number, d: any) => s + (d.owed || 0), 0)
-    const impliedPerHa = totalWorked > 0 ? (totalPaid / totalWorked).toFixed(2) : '—'
-    const repaymentRate = totalOwed > 0 ? ((totalPaid / totalOwed) * 100).toFixed(1) : '—'
-    const rateColor = repaymentRate !== '—' ? (parseFloat(repaymentRate) >= 70 ? 'var(--green)' : parseFloat(repaymentRate) >= 40 ? 'var(--amber)' : 'var(--red)') : undefined
-
-    return (
-      <div>
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
-          <HighlightMetric
-            label="Implied $/ha"
-            value={impliedPerHa !== '—' ? `$${impliedPerHa}` : '—'}
-            color="var(--accent)"
-          />
-          <HighlightMetric
-            label="Repayment Rate"
-            value={repaymentRate !== '—' ? `${repaymentRate}%` : '—'}
-            color={rateColor}
-          />
-        </div>
-        <ResponsiveContainer width="100%" height={200}>
-          <ComposedChart data={data} margin={{ top: 4, right: 50, left: 0, bottom: 0 }}>
-            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={40} />
-            <YAxis yAxisId="left" tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} width={44} label={{ value: 'ha', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#7a8a9e' } }} />
-            <YAxis yAxisId="right" orientation="right" tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} width={48} />
-            <Tooltip content={<CollectionsTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '8px' }} formatter={(v: string) => ({ worked: 'Worked ha', paid: 'Amount Paid' }[v] || v)} />
-            <Bar yAxisId="left" dataKey="worked" fill="#10b981" radius={[2, 2, 0, 0]} name="worked" />
-            <Line yAxisId="right" type="monotone" dataKey="paid" stroke="#f59e0b" strokeWidth={2} dot={false} name="paid" />
-          </ComposedChart>
-        </ResponsiveContainer>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', marginTop: '4px', paddingLeft: '4px' }}>
-          Bars = worked ha (left axis) · Line = amount paid (right axis)
-        </div>
-      </div>
-    )
+    return <CollectionsTrendChart data={data} />
   }
 
   return null

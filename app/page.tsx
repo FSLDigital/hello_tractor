@@ -1,10 +1,10 @@
 import { Suspense } from 'react'
-import { loadData, getPortfolioStats, getLatestPoliticalRisk, getAlerts, getLatestWeather, getFilterOptions, getUtilisationTrend, getCollectionsTrend, getCropFilterOptions, buildAlertContext } from '@/lib/data'
+import { loadData, getPortfolioStats, getLatestPoliticalRisk, getAlerts, getLatestWeather, getFilterOptions, getUtilisationTrendAll, getCollectionsTrendAll, getCropFilterOptions, buildAlertContext } from '@/lib/data'
 import { PageHeader, KpiCard, Card, CardTitle, TierBadge, Grid } from '@/components/ui'
 import CommandCharts from '@/components/CommandCharts'
 import FilterBar from '@/components/FilterBar'
 import AlertPanel from '@/components/AlertPanel'
-import ChartDateFilter from '@/components/ChartDateFilter'
+import FootnotesPanel from '@/components/FootnotesPanel'
 
 function fmtUSD(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`
@@ -24,11 +24,6 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
     crop: sp.crop || '',
   }
 
-  const utilFrom = sp.util_from || ''
-  const utilTo = sp.util_to || ''
-  const collFrom = sp.coll_from || ''
-  const collTo = sp.coll_to || ''
-
   const data = loadData()
   const baseFilterOptions = getFilterOptions(data)
   const filterOptions = { ...baseFilterOptions, crops: getCropFilterOptions() }
@@ -38,8 +33,8 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
   const latestPol = getLatestPoliticalRisk(data)
   const alerts = getAlerts(data)
   const latestWeather = getLatestWeather(data)
-  const utilisationTrend = getUtilisationTrend(data, hasFilter ? filters : undefined, utilFrom, utilTo)
-  const collectionsTrend = getCollectionsTrend(data, hasFilter ? filters : undefined, collFrom, collTo)
+  const utilisationTrend = getUtilisationTrendAll(data, hasFilter ? filters : undefined)
+  const collectionsTrend = getCollectionsTrendAll(data, hasFilter ? filters : undefined)
 
   const weatherByCountry: Record<string, { drought: number; flood: number }> = {}
   for (const w of latestWeather) {
@@ -169,21 +164,11 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
       <div style={{ marginTop: '16px' }}>
         <Grid cols={2} gap={16}>
           <Card>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'DM Mono, monospace' }}>Utilisation trend — covenant vs worked ha</div>
-              <Suspense fallback={null}>
-                <ChartDateFilter paramFrom="util_from" paramTo="util_to" currentFrom={utilFrom} currentTo={utilTo} />
-              </Suspense>
-            </div>
+            <CardTitle>Utilisation trend — covenant vs worked ha</CardTitle>
             <CommandCharts type="utilisation-trend" data={utilisationTrend} />
           </Card>
           <Card>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'DM Mono, monospace' }}>Collections trend — worked ha vs amount paid</div>
-              <Suspense fallback={null}>
-                <ChartDateFilter paramFrom="coll_from" paramTo="coll_to" currentFrom={collFrom} currentTo={collTo} />
-              </Suspense>
-            </div>
+            <CardTitle>Collections trend — worked ha vs amount paid</CardTitle>
             <CommandCharts type="collections-trend" data={collectionsTrend} />
           </Card>
         </Grid>
@@ -222,6 +207,7 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
           </table>
         </Card>
       </div>
+      <FootnotesPanel />
     </div>
   )
 }

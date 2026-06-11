@@ -11,6 +11,43 @@ npm run dev
 
 Open http://localhost:3000
 
+## Latest Alert Email
+
+The Python email trigger sends the latest three active alerts to
+`ola@hellotractor.com` by default, using Gmail SMTP and the same OpenAI pattern
+as the dashboard alert summary.
+
+```bash
+python3 -m pip install -r requirements-email.txt
+python3 send_last_alerts_email.py --dry-run
+python3 send_last_alerts_email.py --to ola@hellotractor.com
+```
+
+Required environment variables:
+
+```bash
+OPENAI_API_KEY=...
+SMTP_USER=your.gmail.address@gmail.com
+SMTP_PASS=your_gmail_app_password
+HT_ALERT_EMAIL_TO=ola@hellotractor.com
+```
+
+Optional online context providers:
+
+```bash
+HT_ALERT_SEARCH_PROVIDER=tavily # tavily, serper, or brave
+TAVILY_API_KEY=...
+# or SERPER_API_KEY=...
+# or BRAVE_SEARCH_API_KEY=...
+```
+
+When the FastAPI digest service is running, trigger it with:
+
+```bash
+curl -X POST http://localhost:8000/portfolio-digest-email/run-now/last-alerts \
+  -H "Authorization: Bearer <token>"
+```
+
 ## Pages
 
 | Page | Route | Purpose |

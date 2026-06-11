@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { loadData, getLatestPoliticalRisk, getLatestWeather, getFilterOptions, filterHTPerformance } from '@/lib/data'
+import { loadData, getLatestPoliticalRisk, getLatestWeather, getFilterOptions, getPortfolioStats } from '@/lib/data'
 import { PageHeader, KpiCard, Card, CardTitle, Grid } from '@/components/ui'
 import RegionalCharts from '@/components/RegionalCharts'
 import RegionalTrendCard from '@/components/RegionalTrendCard'
@@ -23,32 +23,14 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
   const latestPol = getLatestPoliticalRisk(data)
   const latestWeather = getLatestWeather(data)
 
-  // Filter HT performance with all active filters for tractor count + exposure
-  const filteredHT = filterHTPerformance(data.htPerformance, filters)
-
-  // Deduplicate: keep most recent entry per Tractor ID
-  const tractorLatest = new Map<string, typeof filteredHT[0]>()
-  for (const r of filteredHT) {
-    const id = String(r.tractor_id ?? '')
-    if (!id || id === 'null' || id === 'undefined') continue
-    const existing = tractorLatest.get(id)
-    if (!existing) {
-      tractorLatest.set(id, r)
-    } else {
-      const existScore = (existing.year || 0) * 100 + (existing.month_num || 0)
-      const newScore = (r.year || 0) * 100 + (r.month_num || 0)
-      if (newScore > existScore) tractorLatest.set(id, r)
-    }
-  }
-
-  // Per-country: unique tractor count and $ exposure from deduplicated set
+  const portfolioStats = getPortfolioStats(data, filters)
   const tractorsByCountryCode: Record<string, number> = {}
   const exposureByCountryCode: Record<string, number> = {}
-  for (const r of tractorLatest.values()) {
-    const cc = COUNTRY_CC[r.country || '']
+  for (const c of portfolioStats.byCountry) {
+    const cc = COUNTRY_CC[c.country]
     if (!cc) continue
-    tractorsByCountryCode[cc] = (tractorsByCountryCode[cc] || 0) + 1
-    exposureByCountryCode[cc] = (exposureByCountryCode[cc] || 0) + (Number(r.expected_collection) || 0)
+    tractorsByCountryCode[cc] = c.tractorCount
+    exposureByCountryCode[cc] = c.owed
   }
 
   // Apply country filter to political risk and weather data
@@ -65,16 +47,30 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
   const bubbleData = polData.map(p => {
     const regions = weatherData.filter(w => w.region_code.startsWith(p.country_code + '-'))
     const avgDrought = regions.length ? regions.reduce((s, r) => s + r.drought_risk_score, 0) / regions.length : 0
+    const atRisk = p.score > 70
+      || regions.some(r => r.drought_risk_score > 70)
+      || regions.some(r => r.flood_risk_score > 60)
+    const totalTractors = tractorsByCountryCode[p.country_code] || 0
+    const tractorsAtRisk = atRisk ? totalTractors : 0
     return {
       country: p.country_name,
       code: p.country_code,
       political: p.score,
       drought: Math.round(avgDrought),
-      size: tractorsByCountryCode[p.country_code] || 1,
+      size: Math.max(tractorsAtRisk, 1),
+      tractorsAtRisk,
+      totalTractors,
       exposure: exposureByCountryCode[p.country_code] || 0,
       tier: p.tier,
     }
   })
+
+  // Weighted average political risk (tractor-weighted)
+  const totalPortfolioTractors = Object.values(tractorsByCountryCode).reduce((s, v) => s + v, 0)
+  const weightedPolRisk = totalPortfolioTractors > 0
+    ? latestPol.reduce((s, p) => s + p.score * (tractorsByCountryCode[p.country_code] || 0), 0) / totalPortfolioTractors
+    : 0
+  const highestRiskCountry = [...latestPol].sort((a, b) => b.score - a.score)[0]
 
   const fullPolTrend = (() => {
     const byDate: Record<string, Record<string, number>> = {}
@@ -151,7 +147,13 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
         <KpiCard label="High Drought Regions" value={`${highDrought}`} sub="Score > 70 · latest month" color="var(--amber)" />
         <KpiCard label="High Flood Regions" value={`${highFlood}`} sub="Score > 60 · latest month" color="var(--accent)" />
         <KpiCard label="Critical Risk Regions" value={`${criticalRegions.length}`} sub="Drought > 80 or flood > 75" color="var(--red)" />
-        <KpiCard label="Ethiopia Political" value="74/100" sub="Red Watch · highest in portfolio" color="var(--red)" trend="↑ +4 since Jan 2026" />
+        <KpiCard
+          label="Wtd. avg. political risk"
+          value={`${weightedPolRisk.toFixed(1)}/100`}
+          sub={`${highestRiskCountry?.country_name || '—'} highest at ${highestRiskCountry?.score ?? '—'}`}
+          color={weightedPolRisk >= 70 ? 'var(--red)' : weightedPolRisk >= 60 ? 'var(--coral)' : weightedPolRisk >= 50 ? 'var(--amber)' : 'var(--green)'}
+          trend="Tractor-weighted across 5 countries"
+        />
       </div>
 
       <Grid cols={2} gap={16}>

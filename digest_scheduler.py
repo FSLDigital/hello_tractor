@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordBearer
 
 from digest_report import run_daily_digest, run_weekly_digest, run_monthly_digest
+from send_last_alerts_email import DEFAULT_ALERT_TO, run_last_alerts_email
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ async def _loop(name: str, next_fn, job_fn) -> None:
 def _run_daily()   -> dict[str, str]: return run_daily_digest(to=DEFAULT_TO, dry_run=DRY_RUN)
 def _run_weekly()  -> dict[str, str]: return run_weekly_digest(to=DEFAULT_TO, dry_run=DRY_RUN)
 def _run_monthly() -> dict[str, str]: return run_monthly_digest(to=DEFAULT_TO, dry_run=DRY_RUN)
+def _run_last_alerts() -> dict[str, str]: return run_last_alerts_email(to=DEFAULT_ALERT_TO, dry_run=DRY_RUN)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -159,3 +161,8 @@ async def run_now_weekly() -> dict[str, str]:
 @digest_email_router.post("/run-now/monthly")
 async def run_now_monthly() -> dict[str, str]:
     return await asyncio.to_thread(_run_monthly)
+
+
+@digest_email_router.post("/run-now/last-alerts")
+async def run_now_last_alerts() -> dict[str, str]:
+    return await asyncio.to_thread(_run_last_alerts)
