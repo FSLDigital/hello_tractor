@@ -42,7 +42,10 @@ export function loadData(): DashboardData {
 
   cachedData = {
     fx: sheet<FXRate>('FX_Rates'),
-    repayments: sheet<Repayment>('Repayment_Schedule'),
+    repayments: sheet<Repayment>('Repayment_Schedule').map(r => ({
+      ...r,
+      facility_name: r.facility_name ? r.facility_name.replace(/\s*\([^)]*\)/g, '').trim() : r.facility_name,
+    })),
     brent: sheet<BrentPrice>('Brent_Crude'),
     crops: sheet<CropPrice>('Crop_Prices'),
     politicalRisk: sheet<PoliticalRisk>('Political_Risk'),

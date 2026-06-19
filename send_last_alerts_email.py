@@ -61,7 +61,12 @@ _load_env()
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("HT_ALERT_EMAIL_MODEL", "gpt-4o-mini")
-DEFAULT_ALERT_TO = os.getenv("HT_ALERT_EMAIL_TO", DEFAULT_TO)
+_DEFAULT_ALERT_TO_ENV = os.getenv("HT_ALERT_EMAIL_TO", "")
+DEFAULT_ALERT_RECIPIENTS: list[str] = (
+    [e.strip() for e in _DEFAULT_ALERT_TO_ENV.split(",") if e.strip()]
+    if _DEFAULT_ALERT_TO_ENV
+    else ["ola@hellotractor.com", "tobe@hellotractor.com", "irene@hellotractor.com"]
+)
 
 SEARCH_PROVIDER = os.getenv("HT_ALERT_SEARCH_PROVIDER", "tavily").lower()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -542,31 +547,34 @@ def _build_html_email(
 </html>"""
 
 
-def _deliver_single(to: str, subject: str, html: str, plain: str, dry_run: bool, idx: int) -> dict[str, str]:
+def _deliver_single(to: list[str], subject: str, html: str, plain: str, dry_run: bool, idx: int) -> dict[str, str]:
+    to_str = ", ".join(to)
     if dry_run:
         preview = Path(__file__).parent / f"digest_preview_{idx}.html"
         preview.write_text(html, encoding="utf-8")
         logger.info("dry_run — preview saved to %s", preview)
-        return {"status": "dry_run", "to": to, "subject": subject, "preview": str(preview)}
+        return {"status": "dry_run", "to": to_str, "subject": subject, "preview": str(preview)}
 
     msg = MIMEMultipart("alternative")
-    msg["To"] = to
+    msg["To"] = to_str
     msg["Subject"] = subject
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html, "html"))
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     service = _get_gmail_service()
     result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
-    logger.info("email sent → %s | %s (id=%s)", to, subject, result.get("id"))
-    return {"status": "sent", "to": to, "subject": subject, "message_id": result.get("id", "")}
+    logger.info("email sent → %s | %s (id=%s)", to_str, subject, result.get("id"))
+    return {"status": "sent", "to": to_str, "subject": subject, "message_id": result.get("id", "")}
 
 
 def run_last_alerts_email(
-    to: str = DEFAULT_ALERT_TO,
+    to: list[str] | None = None,
     dry_run: bool = DRY_RUN,
     limit: int = 3,
     include_search: bool = True,
 ) -> list[dict[str, str]]:
+    if to is None:
+        to = DEFAULT_ALERT_RECIPIENTS
     logger.info("run_last_alerts_email to=%s dry_run=%s limit=%s include_search=%s", to, dry_run, limit, include_search)
     sheets = _load_sheets()
     perf = sheets["HT_Performance"]
@@ -632,7 +640,7 @@ def run_last_alerts_email(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send the latest three active treasury alerts by email.")
-    parser.add_argument("--to", default=DEFAULT_ALERT_TO, help="Recipient email address.")
+    parser.add_argument("--to", default=None, help="Comma-separated recipient email addresses (default: all three HT recipients).")
     parser.add_argument("--dry-run", action="store_true", help="Write digest_preview.html instead of sending.")
     parser.add_argument("--limit", type=int, default=3, help="Number of active alerts to include.")
     parser.add_argument("--no-search", action="store_true", help="Skip online search context.")
@@ -642,8 +650,9 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = _parse_args()
+    recipients = [e.strip() for e in args.to.split(",")] if args.to else None
     result = run_last_alerts_email(
-        to=args.to,
+        to=recipients,
         dry_run=args.dry_run or DRY_RUN,
         limit=args.limit,
         include_search=not args.no_search,
