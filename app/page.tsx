@@ -119,7 +119,7 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '14px' }}>
-        <KpiCard label="Outstanding HT Debt" value={`$${(totalOutstanding / 1e6).toFixed(2)}M`} sub="3 active facilities" />
+        <KpiCard label="Outstanding Hello Tractor Debt" value={`$${(totalOutstanding / 1e6).toFixed(2)}M`} sub="3 active facilities" />
         <KpiCard
           label="PAYG Outstanding"
           value={`$${(paygOutstanding.total / 1e6).toFixed(2)}M`}
