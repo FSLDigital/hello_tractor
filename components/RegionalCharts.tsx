@@ -1,8 +1,8 @@
 'use client'
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend, ZAxis } from 'recharts'
 
-const POL_COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#ff2d55', UG: '#8b5cf6', RW: '#10b981' }
-const COUNTRY_COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#ff2d55', UG: '#8b5cf6', RW: '#10b981' }
+const POL_COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#f97316', UG: '#8b5cf6', RW: '#10b981' }
+const COUNTRY_COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#f97316', UG: '#8b5cf6', RW: '#10b981' }
 
 function formatUSD(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`

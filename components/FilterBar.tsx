@@ -1,6 +1,6 @@
 'use client'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { useCallback } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
 
 interface FilterOptions {
   countries: string[]
@@ -34,6 +34,119 @@ const selectStyle: React.CSSProperties = {
   minWidth: '130px',
 }
 
+// Multi-select dropdown for country
+function CountryMultiSelect({
+  options,
+  selected,
+  onChange,
+}: {
+  options: string[]
+  selected: string[]
+  onChange: (values: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  function toggle(country: string) {
+    onChange(
+      selected.includes(country)
+        ? selected.filter(c => c !== country)
+        : [...selected, country]
+    )
+  }
+
+  const label =
+    selected.length === 0
+      ? 'All countries'
+      : selected.length === options.length
+      ? 'All countries'
+      : selected.length === 1
+      ? selected[0]
+      : `${selected.length} markets`
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          ...selectStyle,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '6px',
+          minWidth: '140px',
+          background: selected.length > 0 && selected.length < options.length ? 'rgba(59,130,246,0.08)' : 'var(--bg-raised)',
+          border: selected.length > 0 && selected.length < options.length ? '0.5px solid rgba(59,130,246,0.4)' : '0.5px solid var(--border)',
+        }}
+      >
+        <span>{label}</span>
+        <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 4px)',
+          left: 0,
+          zIndex: 100,
+          background: 'var(--bg-card)',
+          border: '0.5px solid var(--border)',
+          borderRadius: '8px',
+          padding: '6px',
+          minWidth: '160px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+        }}>
+          {options.map(c => (
+            <label
+              key={c}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '6px 8px', borderRadius: '5px', cursor: 'pointer',
+                fontSize: '12px', color: 'var(--text-primary)',
+                background: selected.includes(c) ? 'rgba(59,130,246,0.1)' : 'transparent',
+              }}
+              onMouseEnter={e => { if (!selected.includes(c)) (e.currentTarget as HTMLElement).style.background = 'var(--bg-raised)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = selected.includes(c) ? 'rgba(59,130,246,0.1)' : 'transparent' }}
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(c)}
+                onChange={() => toggle(c)}
+                style={{ accentColor: '#3b82f6', width: '13px', height: '13px', cursor: 'pointer' }}
+              />
+              {c}
+            </label>
+          ))}
+          {selected.length > 0 && (
+            <>
+              <div style={{ borderTop: '0.5px solid var(--border)', margin: '4px 0' }} />
+              <button
+                onClick={() => { onChange([]); setOpen(false) }}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '5px 8px',
+                  background: 'transparent', border: 'none',
+                  color: 'var(--text-muted)', fontSize: '11px',
+                  fontFamily: 'DM Mono, monospace', cursor: 'pointer', borderRadius: '5px',
+                }}
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function FilterBar({ options, current }: Props) {
   const router = useRouter()
   const pathname = usePathname()
@@ -49,7 +162,21 @@ export default function FilterBar({ options, current }: Props) {
     router.push(`${pathname}?${params.toString()}`)
   }, [router, pathname, searchParams])
 
-  const activeCount = [current.country, current.region, current.implement, current.funder, current.crop ?? ''].filter(Boolean).length
+  const selectedCountries = current.country
+    ? current.country.split(',').map(s => s.trim()).filter(Boolean)
+    : []
+
+  function handleCountryChange(values: string[]) {
+    updateFilter('country', values.join(','))
+  }
+
+  const activeCount = [
+    selectedCountries.length > 0 ? current.country : '',
+    current.region,
+    current.implement,
+    current.funder,
+    current.crop ?? '',
+  ].filter(Boolean).length
 
   return (
     <div style={{
@@ -62,10 +189,11 @@ export default function FilterBar({ options, current }: Props) {
         Filters{activeCount > 0 ? ` (${activeCount} active)` : ''}
       </span>
 
-      <select style={selectStyle} value={current.country} onChange={e => updateFilter('country', e.target.value)}>
-        <option value="">All countries</option>
-        {options.countries.map(c => <option key={c} value={c}>{c}</option>)}
-      </select>
+      <CountryMultiSelect
+        options={options.countries}
+        selected={selectedCountries}
+        onChange={handleCountryChange}
+      />
 
       <select style={selectStyle} value={current.region} onChange={e => updateFilter('region', e.target.value)}>
         <option value="">All regions</option>
@@ -98,7 +226,7 @@ export default function FilterBar({ options, current }: Props) {
             fontFamily: 'DM Mono, monospace', padding: '5px 10px', cursor: 'pointer',
           }}
         >
-          Clear
+          Clear all
         </button>
       )}
     </div>

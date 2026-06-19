@@ -120,8 +120,11 @@ export function getFilterOptions(data: DashboardData) {
 }
 
 export function filterHTPerformance(perf: HTPerformance[], filters: HTFilters): HTPerformance[] {
+  const selectedCountries = filters.country
+    ? filters.country.split(',').map(s => s.trim()).filter(Boolean)
+    : []
   return perf.filter(r => {
-    if (filters.country && r.country !== filters.country) return false
+    if (selectedCountries.length > 0 && !selectedCountries.includes(r.country)) return false
     if (filters.region && r.region !== filters.region) return false
     if (filters.implement && r.primary_implement !== filters.implement) return false
     if (filters.funder && r.funder !== filters.funder) return false
@@ -148,6 +151,39 @@ function toUSD(amount: number, currencyCode: string, fxRates: Record<string, num
   return rate ? amount / rate : amount
 }
 
+// Historical FX: per-currency sorted array for point-in-time lookups
+type HistoricalFXRates = Record<string, { date: string; rate: number }[]>
+
+function buildHistoricalFXRates(data: DashboardData): HistoricalFXRates {
+  const byCC: HistoricalFXRates = {}
+  for (const r of data.fx) {
+    if (!byCC[r.currency_code]) byCC[r.currency_code] = []
+    byCC[r.currency_code].push({ date: r.observed_at, rate: r.rate_to_usd })
+  }
+  for (const arr of Object.values(byCC)) arr.sort((a, b) => a.date.localeCompare(b.date))
+  return byCC
+}
+
+// Returns the last FX rate observed on or before the end of yearMonth (YYYY-MM).
+// Falls back to the earliest available rate if all observations post-date the month.
+function fxRateForMonth(hfx: HistoricalFXRates, currency: string, yearMonth: string): number {
+  const arr = hfx[currency]
+  if (!arr || arr.length === 0) return 1
+  const ceiling = `${yearMonth}-31`
+  let rate = arr[0].rate
+  for (const obs of arr) {
+    if (obs.date <= ceiling) rate = obs.rate
+    else break
+  }
+  return rate
+}
+
+function toUSDAt(amount: number, currency: string, yearMonth: string, hfx: HistoricalFXRates): number {
+  if (!currency || currency === 'USD') return amount
+  const rate = fxRateForMonth(hfx, currency, yearMonth)
+  return rate ? amount / rate : amount
+}
+
 function parseOrigDate(raw: string | null | undefined): Date | null {
   if (!raw) return null
   const parts = String(raw).split('/')
@@ -166,11 +202,25 @@ function remainingMonths(origDate: Date, now: Date, contractYears = 5): number {
 
 type TractorMeta = { covenant: number; rate: number; origDate: Date | null; country: string; currency_code: string; key: string }
 
-// Builds per-tractor profile from historical rows only, resolving last non-zero covenant and rate.
+// Builds per-tractor profile. Covenant/rate come from past rows only; origination_date is
+// taken from any row (many tractors only have the date populated on future-dated rows).
 function buildTractorMeta(data: DashboardData, filters?: HTFilters): Map<string, TractorMeta> {
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+  // First pass: collect origination dates from ALL rows (any month)
+  const origDates = new Map<string, Date>()
+  for (const r of perf) {
+    const id = r.tractor_id ? String(r.tractor_id) : null
+    if (!id) continue
+    if (!origDates.has(id)) {
+      const d = parseOrigDate(r.origination_date as string)
+      if (d) origDates.set(id, d)
+    }
+  }
+
+  // Second pass: covenant/rate from past rows only
   const meta = new Map<string, TractorMeta>()
   for (const r of perf) {
     const yr = r.year; const mn = r.month_num
@@ -181,12 +231,11 @@ function buildTractorMeta(data: DashboardData, filters?: HTFilters): Map<string,
     const existing = meta.get(id)
     const covenant = Number(r.monthly_covenant_target) || 0
     const rate = Number(r.repayment_per_area) || 0
-    const origDate = parseOrigDate(r.origination_date as string)
     if (!existing || key > existing.key) {
       meta.set(id, {
         covenant: covenant > 0 ? covenant : (existing?.covenant || 0),
         rate: rate > 0 ? rate : (existing?.rate || 0),
-        origDate: origDate || existing?.origDate || null,
+        origDate: origDates.get(id) || existing?.origDate || null,
         country: r.country || existing?.country || '',
         currency_code: r.currency_code || existing?.currency_code || '',
         key,
@@ -194,7 +243,6 @@ function buildTractorMeta(data: DashboardData, filters?: HTFilters): Map<string,
     } else {
       if (covenant > 0 && existing.covenant === 0) existing.covenant = covenant
       if (rate > 0 && existing.rate === 0) existing.rate = rate
-      if (origDate && !existing.origDate) existing.origDate = origDate
     }
   }
   return meta
@@ -212,41 +260,137 @@ export function getPortfolioStats(data: DashboardData, filters?: HTFilters) {
     .reduce((s, r) => s + (r.outstanding_usd || 0), 0)
 
   const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const tractorMeta = buildTractorMeta(data, filters)
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
 
-  const byCountry: Record<string, { owed: number; paid: number; tractors: Set<string> }> = {}
+  const byCountry: Record<string, { covenantDue: number; paid: number; tractors: Set<string> }> = {}
+
+  // Tractor count from meta
   for (const [id, meta] of tractorMeta) {
     const c = meta.country || 'Unknown'
-    if (!byCountry[c]) byCountry[c] = { owed: 0, paid: 0, tractors: new Set() }
+    if (!byCountry[c]) byCountry[c] = { covenantDue: 0, paid: 0, tractors: new Set() }
     byCountry[c].tractors.add(id)
-    byCountry[c].owed += tractorExposureUSD(meta, fxRates, now)
   }
 
+  // Accumulate past-only covenant obligations (ha × rate/ha) and actual collections
+  // using point-in-time FX rates for each row's month
   for (const r of perf) {
+    const yr = r.year; const mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
     const c = r.country || 'Unknown'
-    if (!byCountry[c]) byCountry[c] = { owed: 0, paid: 0, tractors: new Set() }
-    byCountry[c].paid += toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates)
+    if (!byCountry[c]) byCountry[c] = { covenantDue: 0, paid: 0, tractors: new Set() }
+    const covenantLocal = (Number(r.monthly_covenant_target) || 0) * (Number(r.repayment_per_area) || 0)
+    byCountry[c].covenantDue += toUSDAt(covenantLocal, r.currency_code, key, hfx)
+    byCountry[c].paid += toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
   }
 
-  const totalPaid = perf.reduce((s, r) => s + toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates), 0)
-  const totalOwed = Object.values(byCountry).reduce((s, v) => s + v.owed, 0)
-  const repaymentRate = totalOwed > 0 ? (totalPaid / totalOwed) * 100 : 0
+  const totalPaid = Object.values(byCountry).reduce((s, v) => s + v.paid, 0)
+  const totalCovenantDue = Object.values(byCountry).reduce((s, v) => s + v.covenantDue, 0)
+  const repaymentRate = totalCovenantDue > 0 ? (totalPaid / totalCovenantDue) * 100 : 0
 
   return {
     totalOutstanding,
-    totalOwed,
+    totalOwed: totalCovenantDue,
     totalPaid,
     repaymentRate,
     byCountry: Object.entries(byCountry).map(([country, v]) => ({
       country,
-      owed: v.owed,
+      owed: v.covenantDue,
       paid: v.paid,
       tractorCount: v.tractors.size,
-      repaymentRate: v.owed > 0 ? (v.paid / v.owed) * 100 : 0,
+      repaymentRate: v.covenantDue > 0 ? (v.paid / v.covenantDue) * 100 : 0,
     })).sort((a, b) => b.owed - a.owed),
   }
+}
+
+// Portfolio stats filtered by date range for the breakdown table (paid/repaymentRate only)
+export function getPortfolioBreakdown(data: DashboardData, filters?: HTFilters, fromMonth?: string, toMonth?: string) {
+  const hfx = buildHistoricalFXRates(data)
+  const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const tractorMeta = buildTractorMeta(data, filters)
+  const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
+
+  const byCountry: Record<string, { covenantDue: number; paid: number; tractors: Set<string> }> = {}
+
+  for (const [id, meta] of tractorMeta) {
+    const c = meta.country || 'Unknown'
+    if (!byCountry[c]) byCountry[c] = { covenantDue: 0, paid: 0, tractors: new Set() }
+    byCountry[c].tractors.add(id)
+  }
+
+  for (const r of perf) {
+    const yr = r.year; const mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
+    if (fromMonth && key < fromMonth) continue
+    if (toMonth && key > toMonth) continue
+    const c = r.country || 'Unknown'
+    if (!byCountry[c]) byCountry[c] = { covenantDue: 0, paid: 0, tractors: new Set() }
+    const covenantLocal = (Number(r.monthly_covenant_target) || 0) * (Number(r.repayment_per_area) || 0)
+    byCountry[c].covenantDue += toUSDAt(covenantLocal, r.currency_code, key, hfx)
+    byCountry[c].paid += toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
+  }
+
+  return Object.entries(byCountry).map(([country, v]) => ({
+    country,
+    owed: v.covenantDue,
+    paid: v.paid,
+    tractorCount: v.tractors.size,
+    repaymentRate: v.covenantDue > 0 ? (v.paid / v.covenantDue) * 100 : 0,
+  })).sort((a, b) => b.owed - a.owed)
+}
+
+// PAYG Outstanding: past underpaid covenant shortfall + future contract exposure
+export function getPAYGOutstanding(data: DashboardData, filters?: HTFilters): { pastShortfall: number; futureExposure: number; total: number } {
+  const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
+  const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
+
+  let pastShortfall = 0
+  for (const r of perf) {
+    const yr = r.year; const mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
+    const covenantLocal = (Number(r.monthly_covenant_target) || 0) * (Number(r.repayment_per_area) || 0)
+    const covenantUSD = toUSDAt(covenantLocal, r.currency_code, key, hfx)
+    const paid = toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
+    if (covenantUSD > paid) pastShortfall += covenantUSD - paid
+  }
+
+  const tractorMeta = buildTractorMeta(data, filters)
+  let futureExposure = 0
+  for (const meta of tractorMeta.values()) {
+    futureExposure += tractorExposureUSD(meta, fxRates, now)
+  }
+
+  return { pastShortfall, futureExposure, total: pastShortfall + futureExposure }
+}
+
+// Portfolio period range (earliest and latest month in data)
+export function getPortfolioPeriod(data: DashboardData, filters?: HTFilters): { from: string; to: string } {
+  const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
+  const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  let from = '', to = ''
+  for (const r of perf) {
+    const yr = r.year; const mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
+    if (!from || key < from) from = key
+    if (!to || key > to) to = key
+  }
+  return { from, to }
 }
 
 // Exposure keyed by currency code (USD) — used for FX VaR
@@ -301,7 +445,7 @@ export function getFXSeries(data: DashboardData) {
     const entry: Record<string, number | string> = { date }
     for (const c of currencies) {
       const raw = byDate[date][c]
-      if (raw && base[c]) entry[c] = Math.round((raw / base[c]) * 1000) / 10
+      if (raw && base[c]) entry[c] = Math.round((base[c] / raw) * 1000) / 10
     }
     return entry
   })
@@ -317,10 +461,27 @@ export function getWeatherByCountry(data: DashboardData) {
   return countryMap
 }
 
+function latestPastMonth(rows: DashboardData['htPerformance']): string {
+  const now = new Date()
+  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  let best = ''
+  for (const r of rows) {
+    const yr = r.year, mn = r.month_num
+    if (!yr || !mn) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key <= current && key > best) best = key
+  }
+  return best
+}
+
 export function getCropConcentration(data: DashboardData, filters?: HTFilters) {
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
+  const month = latestPastMonth(perf)
   const byCrop: Record<string, number> = {}
   for (const r of perf) {
+    const yr = r.year, mn = r.month_num
+    if (!yr || !mn) continue
+    if (`${yr}-${String(mn).padStart(2, '0')}` !== month) continue
     const crop = r.primary_implement || 'Unknown'
     byCrop[crop] = (byCrop[crop] || 0) + 1
   }
@@ -328,6 +489,20 @@ export function getCropConcentration(data: DashboardData, filters?: HTFilters) {
     .map(([crop, count]) => ({ crop, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 15)
+}
+
+export function getTractorsByCountry(data: DashboardData, filters?: HTFilters) {
+  const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
+  const month = latestPastMonth(perf)
+  const byCountry: Record<string, number> = {}
+  for (const r of perf) {
+    const yr = r.year, mn = r.month_num
+    if (!yr || !mn) continue
+    if (`${yr}-${String(mn).padStart(2, '0')}` !== month) continue
+    const c = r.country || 'Unknown'
+    byCountry[c] = (byCountry[c] || 0) + 1
+  }
+  return { month, rows: Object.entries(byCountry).map(([country, count]) => ({ country, count })).sort((a, b) => b.count - a.count) }
 }
 
 // --- Weighted Average Cost of Funding ---
@@ -348,6 +523,130 @@ export function getWACF(data: DashboardData) {
 
   const wacf = totalOutstanding > 0 ? (weightedSum / totalOutstanding) * 100 : 0
   return { wacf, totalOutstanding, facilities: uniqueFacilities }
+}
+
+// --- Duration Metrics ---
+
+function monthsBetween(from: Date, to: Date): number {
+  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+}
+
+export interface DurationByCountry {
+  country: string
+  duration: number
+  pv: number
+  count: number
+}
+
+export interface DurationMetrics {
+  portfolioDuration: number   // months
+  totalPV: number             // USD
+  activeAgreements: number
+  annualFundingRate: number   // % e.g. 8.5
+  byCountry: DurationByCountry[]
+  cashflowProfile: { month: number; pv: number }[]   // PV of aggregate cashflows per future month
+  durationBuckets: { label: string; count: number; pv: number }[] // distribution histogram
+}
+
+export function getDurationMetrics(data: DashboardData): DurationMetrics {
+  const fxRates = buildFXRates(data)
+  const { wacf } = getWACF(data)
+  const rf = wacf / 100 / 12   // monthly funding rate (e.g. 0.085/12)
+  const T = 60
+  const now = new Date()
+
+  const tractorMeta = buildTractorMeta(data)
+
+  const cashflowAcc: Record<number, number> = {}
+  const byCountry: Record<string, { pvDur: number; pv: number; count: number }> = {}
+
+  let sumPV = 0
+  let sumPVDur = 0
+  let activeAgreements = 0
+
+  for (const [, meta] of tractorMeta) {
+    if (!meta.origDate || !meta.covenant || !meta.rate) continue
+
+    const cfLocal = meta.covenant * meta.rate
+    const cf = toUSD(cfLocal, meta.currency_code, fxRates)
+    if (cf <= 0) continue
+
+    const t0 = Math.max(0, monthsBetween(meta.origDate, now))
+    const remaining = T - t0
+    if (remaining <= 0) continue
+
+    let pv = 0
+    let pvWeightedTime = 0
+
+    for (let t = 1; t <= remaining; t++) {
+      const pvt = cf / Math.pow(1 + rf, t)
+      pv += pvt
+      pvWeightedTime += t * pvt
+      cashflowAcc[t] = (cashflowAcc[t] || 0) + pvt
+    }
+
+    if (pv <= 0) continue
+
+    const dur = pvWeightedTime / pv
+    activeAgreements++
+    sumPV += pv
+    sumPVDur += pv * dur
+
+    const c = meta.country || 'Unknown'
+    if (!byCountry[c]) byCountry[c] = { pvDur: 0, pv: 0, count: 0 }
+    byCountry[c].pv += pv
+    byCountry[c].pvDur += pv * dur
+    byCountry[c].count++
+  }
+
+  const portfolioDuration = sumPV > 0 ? sumPVDur / sumPV : 0
+
+  const byCountryArr: DurationByCountry[] = Object.entries(byCountry)
+    .map(([country, v]) => ({
+      country,
+      duration: v.pv > 0 ? v.pvDur / v.pv : 0,
+      pv: v.pv,
+      count: v.count,
+    }))
+    .sort((a, b) => b.pv - a.pv)
+
+  // Cashflow profile: aggregate PV per future month
+  const cashflowProfile = Object.entries(cashflowAcc)
+    .sort(([a], [b]) => parseInt(a) - parseInt(b))
+    .map(([month, pv]) => ({ month: parseInt(month), pv: Math.round(pv) }))
+
+  // Duration distribution: 6-month buckets
+  const bucketMap: Record<number, { count: number; pv: number }> = {}
+  for (const [, meta] of tractorMeta) {
+    if (!meta.origDate || !meta.covenant || !meta.rate) continue
+    const cfLocal = meta.covenant * meta.rate
+    const cf = toUSD(cfLocal, meta.currency_code, fxRates)
+    if (cf <= 0) continue
+    const t0 = Math.max(0, monthsBetween(meta.origDate, now))
+    const remaining = T - t0
+    if (remaining <= 0) continue
+    let pv = 0, pvWeightedTime = 0
+    for (let t = 1; t <= remaining; t++) {
+      const pvt = cf / Math.pow(1 + rf, t)
+      pv += pvt
+      pvWeightedTime += t * pvt
+    }
+    if (pv <= 0) continue
+    const dur = pvWeightedTime / pv
+    const bucket = Math.floor(dur)
+    if (!bucketMap[bucket]) bucketMap[bucket] = { count: 0, pv: 0 }
+    bucketMap[bucket].count++
+    bucketMap[bucket].pv += pv
+  }
+
+  const durationBuckets = Object.entries(bucketMap)
+    .sort(([a], [b]) => parseInt(a) - parseInt(b))
+    .map(([bucket, v]) => {
+      const lo = parseInt(bucket)
+      return { label: `${lo}m`, count: v.count, pv: Math.round(v.pv) }
+    })
+
+  return { portfolioDuration, totalPV: sumPV, activeAgreements, annualFundingRate: wacf, byCountry: byCountryArr, cashflowProfile, durationBuckets }
 }
 
 // --- DSCR / LLCR ---
@@ -399,9 +698,18 @@ function parseYear(monthStr: string, rowYear: number): number {
 
 export function getALMData(data: DashboardData, filters?: HTFilters) {
   const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
-  const totalOwed = perf.reduce((s, r) => s + toUSD(Number(r.expected_collection) || 0, r.currency_code, fxRates), 0)
-  const totalPaid = perf.reduce((s, r) => s + toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates), 0)
+  const totalOwed = perf.reduce((s, r) => {
+    const yr = r.year, mn = r.month_num
+    const key = yr && mn ? `${yr}-${String(mn).padStart(2, '0')}` : ''
+    return s + (key ? toUSDAt(Number(r.expected_collection) || 0, r.currency_code, key, hfx) : 0)
+  }, 0)
+  const totalPaid = perf.reduce((s, r) => {
+    const yr = r.year, mn = r.month_num
+    const key = yr && mn ? `${yr}-${String(mn).padStart(2, '0')}` : ''
+    return s + (key ? toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx) : 0)
+  }, 0)
   const avgRepaymentRate = totalOwed > 0 ? totalPaid / totalOwed : 0
 
   // Build seasonality lookup: month_number → avg seasonality_index across all countries
@@ -507,7 +815,7 @@ function buildSeasonality(data: DashboardData): Record<number, number> {
 }
 
 export function getALMHistorical(data: DashboardData): { q: string; inflows: number; outflows: number }[] {
-  const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
@@ -518,7 +826,7 @@ export function getALMHistorical(data: DashboardData): { q: string; inflows: num
     if (!yr || !mn) continue
     const key = `${yr}-${String(mn).padStart(2, '0')}`
     if (key > currentMonth) continue
-    const amountUSD = toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates)
+    const amountUSD = toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
     const q = `Q${Math.ceil(mn / 3)}'${String(yr).slice(-2)}`
     quarterlyInflows[q] = (quarterlyInflows[q] || 0) + amountUSD
   }
@@ -707,7 +1015,7 @@ export function getUtilisationTrend(data: DashboardData, filters?: HTFilters, fr
 // --- Collections trend: last 12 months (worked vs paid) ---
 
 export function getCollectionsTrend(data: DashboardData, filters?: HTFilters, fromMonth?: string, toMonth?: string) {
-  const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
   const byMonth: Record<string, { worked: number; paid: number; owed: number; label: string }> = {}
 
@@ -721,8 +1029,8 @@ export function getCollectionsTrend(data: DashboardData, filters?: HTFilters, fr
       byMonth[key] = { worked: 0, paid: 0, owed: 0, label: `${MON_LABELS[mo]} ${String(yr).slice(-2)}` }
     }
     byMonth[key].worked += Number(r.monthly_area_serviced) || 0
-    byMonth[key].paid += toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates)
-    byMonth[key].owed += toUSD(Number(r.expected_collection) || 0, r.currency_code, fxRates)
+    byMonth[key].paid += toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
+    byMonth[key].owed += toUSDAt(Number(r.expected_collection) || 0, r.currency_code, key, hfx)
   }
 
   const sorted = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b))
@@ -756,7 +1064,7 @@ export function getUtilisationTrendAll(data: DashboardData, filters?: HTFilters)
 }
 
 export function getCollectionsTrendAll(data: DashboardData, filters?: HTFilters) {
-  const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const perf = filters ? filterHTPerformance(data.htPerformance, filters) : data.htPerformance
   const byMonth: Record<string, { worked: number; paid: number; owed: number; label: string }> = {}
   for (const r of perf) {
@@ -769,8 +1077,8 @@ export function getCollectionsTrendAll(data: DashboardData, filters?: HTFilters)
       byMonth[key] = { worked: 0, paid: 0, owed: 0, label: `${MON_LABELS[mo]} ${String(yr).slice(-2)}` }
     }
     byMonth[key].worked += Number(r.monthly_area_serviced) || 0
-    byMonth[key].paid += toUSD(Number(r.total_collection) || 0, r.currency_code, fxRates)
-    byMonth[key].owed += toUSD(Number(r.expected_collection) || 0, r.currency_code, fxRates)
+    byMonth[key].paid += toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
+    byMonth[key].owed += toUSDAt(Number(r.expected_collection) || 0, r.currency_code, key, hfx)
   }
   return Object.entries(byMonth)
     .sort(([a], [b]) => a.localeCompare(b))

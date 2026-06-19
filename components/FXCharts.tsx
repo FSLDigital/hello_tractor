@@ -355,7 +355,7 @@ function FXTrendsHeatmap({ data }: { data: any[] }) {
               </ResponsiveContainer>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '6px' }}>
                 <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '10px', color: 'var(--text-muted)' }}>idx {val.toFixed(1)} / USD</span>
-                <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', fontWeight: 500, color: totalChange >= 0 ? 'var(--red)' : 'var(--green)' }}>
+                <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', fontWeight: 500, color: totalChange >= 0 ? 'var(--green)' : 'var(--red)' }}>
                   {totalChange >= 0 ? '+' : ''}{totalChange.toFixed(1)}%
                 </span>
               </div>

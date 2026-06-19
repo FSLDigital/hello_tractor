@@ -4,7 +4,7 @@ import RegionalCharts from './RegionalCharts'
 
 const ALL_CODES = ['ET', 'NG', 'KE', 'UG', 'RW']
 const CODE_LABELS: Record<string, string> = { ET: 'Ethiopia', NG: 'Nigeria', KE: 'Kenya', UG: 'Uganda', RW: 'Rwanda' }
-const COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#ff2d55', UG: '#8b5cf6', RW: '#10b981' }
+const COLORS: Record<string, string> = { KE: '#3b82f6', NG: '#ef4444', ET: '#f97316', UG: '#8b5cf6', RW: '#10b981' }
 
 const INPUT_STYLE: React.CSSProperties = {
   background: 'var(--bg-raised)', border: '0.5px solid var(--border)', borderRadius: '6px',

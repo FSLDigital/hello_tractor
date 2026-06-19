@@ -28,9 +28,11 @@ export interface BrentPrice {
 export interface CropPrice {
   crop: string
   year: number
+  year_month: string
   price: number
   unit: string
   price_basis: string
+  source: string
 }
 
 export interface PoliticalRisk {

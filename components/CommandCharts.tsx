@@ -1,8 +1,9 @@
 'use client'
 import React, { useState, useMemo } from 'react'
-import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Legend, ComposedChart, Line } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Legend, ComposedChart, Line, TooltipProps } from 'recharts'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f97316']
+const FACILITY_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f97316', '#ec4899']
 const TOOLTIP_STYLE: React.CSSProperties = { background: '#1a2434', border: '0.5px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '10px 14px', minWidth: '210px' }
 const TICK_STYLE = { fontSize: 10, fill: '#7a8a9e', fontFamily: 'DM Mono, monospace' }
 
@@ -268,26 +269,71 @@ export default function CommandCharts({ type, data }: Props) {
   }
 
   if (type === 'repayments') {
-    // Group by full date (keep DD/MM/YYYY), sort chronologically
-    const grouped: Record<string, number> = {}
+    // Collect all unique facility names (preserve insertion order → sorted by first appearance)
+    const facilityOrder: string[] = []
+    data.forEach((d: any) => {
+      if (!facilityOrder.includes(d.facility)) facilityOrder.push(d.facility)
+    })
+
+    // Group by date × facility
+    const byDate: Record<string, Record<string, number>> = {}
     data.forEach((d: any) => {
       const key = String(d.date)
-      grouped[key] = (grouped[key] || 0) + d.amount
+      if (!byDate[key]) byDate[key] = {}
+      byDate[key][d.facility] = (byDate[key][d.facility] || 0) + d.amount
     })
-    const chartData = Object.entries(grouped)
+
+    const chartData = Object.entries(byDate)
       .sort(([a], [b]) => parseDMY(a).localeCompare(parseDMY(b)))
-      .map(([date, amount]) => ({ date: normaliseDMY(date), amount: Math.round(amount) }))
+      .map(([date, byFacility]) => ({
+        date: normaliseDMY(date),
+        ...Object.fromEntries(facilityOrder.map(f => [f, Math.round(byFacility[f] || 0)])),
+      }))
+
+    const facilityColorMap: Record<string, string> = {}
+    facilityOrder.forEach((f, i) => { facilityColorMap[f] = FACILITY_COLORS[i % FACILITY_COLORS.length] })
+
+    // Stacked tooltip
+    function RepaymentsTooltip({ active, payload, label }: any) {
+      if (!active || !payload?.length) return null
+      const total = payload.reduce((s: number, p: any) => s + (p.value || 0), 0)
+      return (
+        <div style={TOOLTIP_STYLE}>
+          <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>{label}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {payload.map((p: any) => (
+              <div key={p.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', fontSize: '11px' }}>
+                <span style={{ color: p.fill }}>● {p.dataKey}</span>
+                <span style={{ fontFamily: 'DM Mono, monospace' }}>${Number(p.value).toLocaleString()}</span>
+              </div>
+            ))}
+            <div style={{ borderTop: '0.5px solid rgba(255,255,255,0.1)', marginTop: '4px', paddingTop: '4px', display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 600 }}>
+              <span style={{ color: 'var(--text-muted)' }}>Total</span>
+              <span style={{ fontFamily: 'DM Mono, monospace' }}>${total.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+      )
+    }
 
     return (
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 50 }}>
-          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
-          <XAxis dataKey="date" tick={TICK_STYLE} tickLine={false} axisLine={false} angle={-40} textAnchor="end" interval={0} height={60} />
-          <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} width={52} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [`$${Number(v).toLocaleString()}`, 'Due']} />
-          <Bar dataKey="amount" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      <div>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 50 }}>
+            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="date" tick={TICK_STYLE} tickLine={false} axisLine={false} angle={-40} textAnchor="end" interval={0} height={60} />
+            <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} width={52} />
+            <Tooltip content={<RepaymentsTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: '11px', fontFamily: 'DM Mono, monospace', paddingTop: '4px' }}
+              formatter={(v: string) => <span style={{ color: facilityColorMap[v] || 'var(--text-muted)' }}>{v}</span>}
+            />
+            {facilityOrder.map((f, i) => (
+              <Bar key={f} dataKey={f} stackId="a" fill={FACILITY_COLORS[i % FACILITY_COLORS.length]} radius={i === facilityOrder.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     )
   }
 

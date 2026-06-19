@@ -34,11 +34,12 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
     exposureByCountryCode[cc] = c.owed
   }
 
-  // Apply country filter to political risk and weather data
-  const activeCC = filters.country ? (COUNTRY_CC[filters.country] || null) : null
-  const polData = activeCC ? latestPol.filter(p => p.country_code === activeCC) : latestPol
-  const weatherData = activeCC
-    ? latestWeather.filter(w => w.region_code.startsWith(activeCC + '-'))
+  // Apply country filter to political risk and weather data (supports multiple countries)
+  const selectedCountries = filters.country ? filters.country.split(',').map(s => s.trim()).filter(Boolean) : []
+  const activeCCs = selectedCountries.map(c => COUNTRY_CC[c]).filter(Boolean)
+  const polData = activeCCs.length > 0 ? latestPol.filter(p => activeCCs.includes(p.country_code)) : latestPol
+  const weatherData = activeCCs.length > 0
+    ? latestWeather.filter(w => activeCCs.some(cc => w.region_code.startsWith(cc + '-')))
     : latestWeather
 
   const highDrought = weatherData.filter(w => w.drought_risk_score > 70).length
@@ -95,8 +96,8 @@ export default async function RegionalPage({ searchParams }: { searchParams: Pro
     return Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, scores]) => ({ date, ...scores }))
   })()
 
-  // Visible country codes for trend charts (all 5 or just the filtered one)
-  const visibleCodes = activeCC ? [activeCC] : ['ET', 'NG', 'KE', 'UG', 'RW']
+  // Visible country codes for trend charts (all 5 or just the filtered ones)
+  const visibleCodes = activeCCs.length > 0 ? activeCCs : ['ET', 'NG', 'KE', 'UG', 'RW']
 
   const PILLARS = [
     { key: 'pillar_political_stability', label: 'Political Stability', short: 'P1' },

@@ -1,10 +1,11 @@
 import { Suspense } from 'react'
-import { loadData, getFXSeries, getWACF, getALMData, getALMHistorical, getALMForecastBase, getExposureByCurrency, getDSCRMetrics } from '@/lib/data'
+import { loadData, getFXSeries, getWACF, getALMData, getALMHistorical, getALMForecastBase, getExposureByCurrency, getDSCRMetrics, getDurationMetrics } from '@/lib/data'
 import { PageHeader, KpiCard, Card, CardTitle, Grid, SectionDivider } from '@/components/ui'
 import FXCharts from '@/components/FXCharts'
 import FXVaR from '@/components/FXVaR'
 import FXBaseDatePicker from '@/components/FXBaseDatePicker'
 import DSCRCharts from '@/components/DSCRCharts'
+import DurationCharts from '@/components/DurationCharts'
 import FootnotesPanel, { FX_METRICS } from '@/components/FootnotesPanel'
 
 export default async function FXPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
@@ -18,6 +19,7 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
   const almHistorical = getALMHistorical(data)
   const almForecastBase = getALMForecastBase(data)
   const { rows: dscrRows, latest: dscrLatest } = getDSCRMetrics(data)
+  const duration = getDurationMetrics(data)
 
   const currencies = ['KES', 'NGN', 'ETB', 'UGX', 'RWF']
   const currencyNames: Record<string, string> = { KES: 'Kenyan Shilling', NGN: 'Nigerian Naira', ETB: 'Ethiopian Birr', UGX: 'Ugandan Shilling', RWF: 'Rwandan Franc' }
@@ -125,8 +127,8 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
         <KpiCard label="Wtd. Avg. Cost of Funding" value={`${wacf.toFixed(2)}%`} sub={`$${(totalOutstanding / 1e6).toFixed(2)}M outstanding`} color={wacf > 10 ? 'var(--red)' : wacf > 6 ? 'var(--amber)' : 'var(--green)'} trend="Null rates treated as 0%" />
         <KpiCard
           label={`Wtd. portfolio FX shift (${changeColLabel})`}
-          value={`${weightedFXChange >= 0 ? '+' : ''}${weightedFXChange.toFixed(1)}%`}
-          sub="Exposure-wtd. across 5 currencies · +ve = weakened vs USD"
+          value={`${(-weightedFXChange) >= 0 ? '+' : ''}${(-weightedFXChange).toFixed(1)}%`}
+          sub="Exposure-wtd. across 5 currencies · -ve = weakened vs USD"
           color={weightedFXChange > 10 ? 'var(--red)' : weightedFXChange > 0 ? 'var(--amber)' : 'var(--green)'}
         />
       </div>
@@ -142,7 +144,7 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
               {f.latest.toFixed(2)}
             </div>
             <div style={{ fontSize: '11px', marginTop: '4px', fontFamily: 'DM Mono, monospace', color: f.change12m > 0 ? 'var(--red)' : 'var(--green)' }}>
-              {f.change12m > 0 ? '+' : ''}{f.change12m.toFixed(1)}% (12-mo)
+              {(-f.change12m) >= 0 ? '+' : ''}{(-f.change12m).toFixed(1)}% (12-mo)
             </div>
           </div>
         ))}
@@ -156,70 +158,9 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
 
       {/* Depreciation chart — date range controlled inside FXCharts */}
       <Card style={{ marginBottom: '16px' }}>
-        <CardTitle>Currency depreciation indexed to first observation = 100 (higher = weaker vs USD)</CardTitle>
+        <CardTitle>Currency strength indexed to first observation = 100 (lower = weaker vs USD)</CardTitle>
         <FXCharts type="indexed-lines" data={fxSeries} minDate={fxMinDate} maxDate={fxMaxDate} />
       </Card>
-
-      {/* ALM historical + forecast side by side */}
-      <div style={{ marginBottom: '16px' }}>
-        <Grid cols={2} gap={16}>
-          <Card>
-            <CardTitle>Historical inflows vs repayments — actual (USD)</CardTitle>
-            <FXCharts type="alm-historical" data={almHistorical} />
-          </Card>
-          <Card>
-            <CardTitle>Projected future inflows vs repayments — seasonality-adjusted (USD)</CardTitle>
-            <FXCharts type="alm-forecast" data={almForecastBase} />
-          </Card>
-        </Grid>
-      </div>
-
-      {/* DSCR / LLCR section */}
-      <SectionDivider label="Debt Service & Coverage Metrics" />
-
-      {/* DSCR KPI cards */}
-      {dscrLatest && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '16px' }}>
-          <KpiCard
-            label={`DSCR · ${dscrLatest.period}`}
-            value={dscrLatest.dscr != null ? `${Number(dscrLatest.dscr).toFixed(2)}x` : '—'}
-            sub="EBITDA / (Interest + Principal)"
-            color={Number(dscrLatest.dscr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.dscr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
-          />
-          <KpiCard
-            label={`LLCR · ${dscrLatest.period}`}
-            value={dscrLatest.llcr != null ? `${Number(dscrLatest.llcr).toFixed(2)}x` : '—'}
-            sub="NPV(CFADS remaining) / Total Debt"
-            color={Number(dscrLatest.llcr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.llcr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
-          />
-          <KpiCard
-            label={`Interest Coverage · ${dscrLatest.period}`}
-            value={dscrLatest.interest_coverage != null ? `${Number(dscrLatest.interest_coverage).toFixed(2)}x` : '—'}
-            sub="EBIT / Interest Expense"
-            color={Number(dscrLatest.interest_coverage) >= 3.0 ? 'var(--green)' : Number(dscrLatest.interest_coverage) >= 2.0 ? 'var(--amber)' : 'var(--red)'}
-          />
-          <KpiCard
-            label={`D/E Ratio · ${dscrLatest.period}`}
-            value={dscrLatest.debt_to_equity != null ? `${Number(dscrLatest.debt_to_equity).toFixed(2)}x` : '—'}
-            sub="(STD + LTD) / Shareholders Equity"
-            color={Number(dscrLatest.debt_to_equity) <= 1.0 ? 'var(--green)' : Number(dscrLatest.debt_to_equity) <= 2.0 ? 'var(--amber)' : 'var(--red)'}
-          />
-        </div>
-      )}
-
-      {/* DSCR/LLCR + Leverage time series side by side */}
-      <div style={{ marginBottom: '24px' }}>
-        <Grid cols={2} gap={16}>
-          <Card>
-            <CardTitle>DSCR — debt service coverage over loan life (projected)</CardTitle>
-            <DSCRCharts type="dscr-llcr" rows={dscrRows} />
-          </Card>
-          <Card>
-            <CardTitle>Interest coverage & debt/equity — leverage trajectory (projected)</CardTitle>
-            <DSCRCharts type="leverage" rows={dscrRows} />
-          </Card>
-        </Grid>
-      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '16px' }}>
         <Card>
@@ -244,7 +185,7 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
                   <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>{f.country}</td>
                   <td style={{ padding: '10px', fontFamily: 'DM Mono, monospace' }}>{f.latest.toFixed(2)}</td>
                   <td style={{ padding: '10px', fontFamily: 'DM Mono, monospace', color: f.change > 0 ? 'var(--red)' : 'var(--green)' }}>
-                    {f.change > 0 ? '+' : ''}{f.change.toFixed(1)}%
+                    {(-f.change) >= 0 ? '+' : ''}{(-f.change).toFixed(1)}%
                   </td>
                 </tr>
               ))}
@@ -277,10 +218,122 @@ export default async function FXPage({ searchParams }: { searchParams: Promise<R
       </div>
 
       {/* Currency trends (sparklines) + FX correlation heatmap */}
-      <Card>
+      <Card style={{ marginBottom: '16px' }}>
         <CardTitle>Currency trends & FX correlation</CardTitle>
         <FXCharts type="fx-trends-heatmap" data={fxSeries} />
       </Card>
+
+      {/* ALM historical + forecast side by side */}
+      <div style={{ marginBottom: '16px' }}>
+        <Grid cols={2} gap={16}>
+          <Card>
+            <CardTitle>Historical inflows vs repayments — actual (USD)</CardTitle>
+            <FXCharts type="alm-historical" data={almHistorical} />
+          </Card>
+          <Card>
+            <CardTitle>Projected future inflows vs repayments — seasonality-adjusted (USD)</CardTitle>
+            <FXCharts type="alm-forecast" data={almForecastBase} />
+          </Card>
+        </Grid>
+      </div>
+
+      {/* Duration section */}
+      <SectionDivider label="PAYG Portfolio Duration — PV-weighted average time to cashflows" />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '16px' }}>
+        <KpiCard
+          label="Portfolio Duration"
+          value={`${duration.portfolioDuration.toFixed(2)} mo`}
+          sub="PV-weighted avg. time to remaining cashflows"
+          color="var(--accent)"
+        />
+        <KpiCard
+          label="Total Present Value"
+          value={duration.totalPV >= 1e6 ? `$${(duration.totalPV / 1e6).toFixed(2)}M` : `$${(duration.totalPV / 1e3).toFixed(0)}k`}
+          sub="Discounted at monthly funding cost"
+          color="var(--text-primary)"
+        />
+        <KpiCard
+          label="Active Agreements"
+          value={duration.activeAgreements.toLocaleString()}
+          sub="Agreements with remaining contract life"
+          color="var(--text-primary)"
+        />
+        <KpiCard
+          label="Monthly Funding Rate"
+          value={`${(duration.annualFundingRate / 12).toFixed(3)}%`}
+          sub={`WACF ${duration.annualFundingRate.toFixed(2)}% p.a. ÷ 12`}
+          color="var(--amber)"
+        />
+      </div>
+
+      <div style={{ marginBottom: '16px' }}>
+        <Grid cols={2} gap={16}>
+          <Card>
+            <CardTitle>Duration by country — PV-weighted average (months)</CardTitle>
+            <DurationCharts type="by-country" metrics={duration} />
+          </Card>
+          <Card>
+            <CardTitle>Agreement duration distribution</CardTitle>
+            <DurationCharts type="distribution" metrics={duration} />
+          </Card>
+        </Grid>
+      </div>
+
+      <Card style={{ marginBottom: '24px' }}>
+        <CardTitle>Forward cashflow profile — PV of aggregate repayments by quarter (USD)</CardTitle>
+        <DurationCharts type="cashflow-profile" metrics={duration} />
+      </Card>
+
+      {/* DSCR / LLCR section */}
+      {(() => {
+        const firstPeriod = dscrRows[0]?.period
+        const lastPeriod = dscrRows[dscrRows.length - 1]?.period
+        const periodRange = firstPeriod && lastPeriod ? `${firstPeriod} – ${lastPeriod}` : ''
+        return <SectionDivider label={`Debt Service & Coverage Metrics${periodRange ? ` · ${periodRange}` : ''}`} />
+      })()}
+
+      {dscrLatest && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '16px' }}>
+          <KpiCard
+            label={`DSCR · ${dscrLatest.period}`}
+            value={dscrLatest.dscr != null ? `${Number(dscrLatest.dscr).toFixed(2)}x` : '—'}
+            sub="EBITDA / (Interest + Principal)"
+            color={Number(dscrLatest.dscr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.dscr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`LLCR · ${dscrLatest.period}`}
+            value={dscrLatest.llcr != null ? `${Number(dscrLatest.llcr).toFixed(2)}x` : '—'}
+            sub="NPV(CFADS remaining) / Total Debt"
+            color={Number(dscrLatest.llcr) >= 1.2 ? 'var(--green)' : Number(dscrLatest.llcr) >= 1.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`Interest Coverage · ${dscrLatest.period}`}
+            value={dscrLatest.interest_coverage != null ? `${Number(dscrLatest.interest_coverage).toFixed(2)}x` : '—'}
+            sub="EBIT / Interest Expense"
+            color={Number(dscrLatest.interest_coverage) >= 3.0 ? 'var(--green)' : Number(dscrLatest.interest_coverage) >= 2.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+          <KpiCard
+            label={`D/E Ratio · ${dscrLatest.period}`}
+            value={dscrLatest.debt_to_equity != null ? `${Number(dscrLatest.debt_to_equity).toFixed(2)}x` : '—'}
+            sub="(STD + LTD) / Shareholders Equity"
+            color={Number(dscrLatest.debt_to_equity) <= 1.0 ? 'var(--green)' : Number(dscrLatest.debt_to_equity) <= 2.0 ? 'var(--amber)' : 'var(--red)'}
+          />
+        </div>
+      )}
+
+      <div style={{ marginBottom: '24px' }}>
+        <Grid cols={2} gap={16}>
+          <Card>
+            <CardTitle>DSCR — debt service coverage over loan life (projected)</CardTitle>
+            <DSCRCharts type="dscr-llcr" rows={dscrRows} />
+          </Card>
+          <Card>
+            <CardTitle>Interest coverage & debt/equity — leverage trajectory (projected)</CardTitle>
+            <DSCRCharts type="leverage" rows={dscrRows} />
+          </Card>
+        </Grid>
+      </div>
 
       <FootnotesPanel metrics={FX_METRICS} />
     </div>

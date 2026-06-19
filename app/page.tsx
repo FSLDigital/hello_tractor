@@ -1,10 +1,18 @@
 import { Suspense } from 'react'
-import { loadData, getPortfolioStats, getLatestPoliticalRisk, getAlerts, getLatestWeather, getFilterOptions, getUtilisationTrendAll, getCollectionsTrendAll, getCropFilterOptions, buildAlertContext } from '@/lib/data'
+import { loadData, getPortfolioStats, getLatestPoliticalRisk, getAlerts, getLatestWeather, getFilterOptions, getUtilisationTrendAll, getCollectionsTrendAll, getCropFilterOptions, buildAlertContext, getPAYGOutstanding, getPortfolioPeriod, getPortfolioBreakdown } from '@/lib/data'
 import { PageHeader, KpiCard, Card, CardTitle, TierBadge, Grid } from '@/components/ui'
 import CommandCharts from '@/components/CommandCharts'
 import FilterBar from '@/components/FilterBar'
 import AlertPanel from '@/components/AlertPanel'
 import FootnotesPanel, { COMMAND_CENTRE_METRICS } from '@/components/FootnotesPanel'
+import BreakdownTable from '@/components/BreakdownTable'
+
+function fmtPeriod(ym: string): string {
+  if (!ym) return '—'
+  const [y, m] = ym.split('-')
+  const MON = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${MON[parseInt(m)] || m} ${y}`
+}
 
 function fmtUSD(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`
@@ -12,7 +20,6 @@ function fmtUSD(v: number): string {
   return `$${Math.round(v).toLocaleString()}`
 }
 
-const CURRENCY_MAP: Record<string, string> = { Kenya: 'KES', Nigeria: 'NGN', Ethiopia: 'ETB', Uganda: 'UGX', Rwanda: 'RWF' }
 
 export default async function CommandCentre({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const sp = await searchParams
@@ -23,18 +30,24 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
     funder: sp.funder || '',
     crop: sp.crop || '',
   }
+  const bdFrom = sp.bdFrom || ''
+  const bdTo = sp.bdTo || ''
 
   const data = loadData()
   const baseFilterOptions = getFilterOptions(data)
   const filterOptions = { ...baseFilterOptions, crops: getCropFilterOptions() }
 
   const hasFilter = Object.values(filters).some(Boolean)
+  const selectedCountries = filters.country ? filters.country.split(',').map(s => s.trim()).filter(Boolean) : []
   const stats = getPortfolioStats(data, hasFilter ? filters : undefined)
   const latestPol = getLatestPoliticalRisk(data)
   const alerts = getAlerts(data)
   const latestWeather = getLatestWeather(data)
   const utilisationTrend = getUtilisationTrendAll(data, hasFilter ? filters : undefined)
   const collectionsTrend = getCollectionsTrendAll(data, hasFilter ? filters : undefined)
+  const paygOutstanding = getPAYGOutstanding(data, hasFilter ? filters : undefined)
+  const portfolioPeriod = getPortfolioPeriod(data, hasFilter ? filters : undefined)
+  const breakdownRows = getPortfolioBreakdown(data, hasFilter ? filters : undefined, bdFrom || undefined, bdTo || undefined)
 
   const weatherByCountry: Record<string, { drought: number; flood: number }> = {}
   for (const w of latestWeather) {
@@ -105,16 +118,33 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '24px' }}>
-        <KpiCard label="Total Outstanding Debt" value={`$${(totalOutstanding / 1e6).toFixed(2)}M`} sub="3 active facilities" />
-        <KpiCard label="Portfolio Repayment Rate" value={`${stats.repaymentRate.toFixed(1)}%`} sub={`$${(stats.totalPaid / 1e6).toFixed(1)}M paid`} color={stats.repaymentRate > 70 ? 'var(--green)' : 'var(--amber)'} />
-        <KpiCard label="Active Tractors" value={stats.byCountry.reduce((s, c) => s + c.tractorCount, 0).toLocaleString()} sub="Across 5 countries" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '14px' }}>
+        <KpiCard label="Outstanding HT Debt" value={`$${(totalOutstanding / 1e6).toFixed(2)}M`} sub="3 active facilities" />
+        <KpiCard
+          label="PAYG Outstanding"
+          value={`$${(paygOutstanding.total / 1e6).toFixed(2)}M`}
+          sub={`$${(paygOutstanding.pastShortfall / 1e6).toFixed(2)}M underpaid · $${(paygOutstanding.futureExposure / 1e6).toFixed(2)}M future`}
+          color="var(--amber)"
+        />
         <KpiCard
           label="Wtd Avg Political Risk"
           value={`${weightedPolRisk.toFixed(1)}/100`}
           sub={`${highestRiskCountry?.country || ''} highest at ${highestRiskCountry?.political || 0}`}
           color={polRiskColor}
           trend={weightedPolRisk >= 60 ? '↑ Elevated' : undefined}
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px', marginBottom: '24px' }}>
+        <KpiCard
+          label="Portfolio Repayment Rate"
+          value={`${stats.repaymentRate.toFixed(1)}%`}
+          sub={`$${(stats.totalPaid / 1e6).toFixed(1)}M paid · ${fmtPeriod(portfolioPeriod.from)} – ${fmtPeriod(portfolioPeriod.to)}`}
+          color={stats.repaymentRate > 70 ? 'var(--green)' : 'var(--amber)'}
+        />
+        <KpiCard
+          label="Active Tractors"
+          value={stats.byCountry.reduce((s, c) => s + c.tractorCount, 0).toLocaleString()}
+          sub={selectedCountries.length > 0 ? `In selected market${selectedCountries.length > 1 ? 's' : ''} (${selectedCountries.join(', ')})` : 'Across all markets'}
         />
       </div>
 
@@ -177,34 +207,9 @@ export default async function CommandCentre({ searchParams }: { searchParams: Pr
       <div style={{ marginTop: '16px' }}>
         <Card>
           <CardTitle>Portfolio breakdown by country (USD)</CardTitle>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-            <thead>
-              <tr>
-                {['Country', 'Currency', 'Expected (USD)', 'Collected (USD)', 'Repayment Rate', 'Active Tractors'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', fontSize: '10px', fontWeight: 400, borderBottom: '0.5px solid var(--border)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {stats.byCountry.map((c, i) => (
-                <tr key={c.country} style={{ borderBottom: i < stats.byCountry.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                  <td style={{ padding: '10px 10px', fontWeight: 500 }}>{c.country}</td>
-                  <td style={{ padding: '10px 10px', fontFamily: 'DM Mono, monospace', color: 'var(--text-secondary)' }}>{CURRENCY_MAP[c.country] || 'USD'}</td>
-                  <td style={{ padding: '10px 10px', fontFamily: 'DM Mono, monospace' }}>{fmtUSD(c.owed)}</td>
-                  <td style={{ padding: '10px 10px', fontFamily: 'DM Mono, monospace', color: 'var(--green)' }}>{fmtUSD(c.paid)}</td>
-                  <td style={{ padding: '10px 10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ flex: 1, height: '4px', background: 'var(--bg-raised)', borderRadius: '2px', maxWidth: '80px' }}>
-                        <div style={{ width: `${Math.min(c.repaymentRate, 100)}%`, height: '100%', background: c.repaymentRate > 70 ? 'var(--green)' : c.repaymentRate > 40 ? 'var(--amber)' : 'var(--red)', borderRadius: '2px' }} />
-                      </div>
-                      <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text-secondary)' }}>{c.repaymentRate.toFixed(1)}%</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: '10px 10px', fontFamily: 'DM Mono, monospace', color: 'var(--text-secondary)' }}>{c.tractorCount.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Suspense fallback={null}>
+            <BreakdownTable rows={breakdownRows} bdFrom={bdFrom} bdTo={bdTo} />
+          </Suspense>
         </Card>
       </div>
       <FootnotesPanel metrics={COMMAND_CENTRE_METRICS} />

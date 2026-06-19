@@ -15,8 +15,13 @@ export const COMMAND_CENTRE_METRICS: FootnoteMetric[] = [
   },
   {
     label: 'Portfolio Repayment Rate',
-    formula: 'total_paid ÷ total_owed × 100',
-    notes: 'total_owed is the sum of expected collections across all HT performance records matching the active filter. total_paid is the sum of actual collections recorded in the same records.',
+    formula: 'Σ max(total_collection, actual_collection) ÷ Σ (monthly_covenant_target × repayment_per_ha) × 100',
+    notes: 'Denominator is the sum of contractual covenant obligations (ha target × rate per ha) for all past months (Jan 2022 to today). Numerator is the higher of total_collection or actual_collection per row — whichever field is more complete. Both are converted to USD using the FX rate observed closest to each row\'s own month, not today\'s rate.',
+  },
+  {
+    label: 'PAYG Outstanding',
+    formula: 'Σ max(0, covenant_USD − paid_USD) for past rows  +  Σ remaining_months × covenant_ha × rate_per_ha for active agreements',
+    notes: 'Past shortfall: cumulative underpayment vs covenant since origination, using point-in-time FX rates. Future exposure: remaining contract months × monthly covenant converted at current FX. Together they represent total uncollected and yet-to-be-collected PAYG revenue.',
   },
   {
     label: 'Active Tractors',
@@ -30,8 +35,8 @@ export const COMMAND_CENTRE_METRICS: FootnoteMetric[] = [
   },
   {
     label: 'Country Exposure ($k)',
-    formula: 'Per country: Σ toUSD(covenant_ha × rate_per_ha, currency) × remaining_months(origination_date, today)',
-    notes: 'Forward-looking residual revenue exposure, not historical collections. A tractor with one month left on contract contributes proportionally less than one newly deployed. FX conversion uses the latest observed rate for each currency.',
+    formula: 'Per country: Σ (covenant_ha × rate_per_ha ÷ fx_rate) × remaining_months(origination_date, today)',
+    notes: 'Forward-looking residual revenue exposure, not historical collections. A tractor with one month left on contract contributes proportionally less than one newly deployed. FX conversion uses the latest observed rate (appropriate for a forward projection).',
   },
   {
     label: 'Utilisation (%)',
@@ -40,13 +45,13 @@ export const COMMAND_CENTRE_METRICS: FootnoteMetric[] = [
   },
   {
     label: 'Implied $/ha',
-    formula: 'Σ amount_paid ÷ Σ worked_ha across the selected date window',
-    notes: 'Average revenue yield per worked hectare. High values reflect a favourable crop mix or premium contracts; low values may indicate collection shortfalls or low-rate regions dominating the window.',
+    formula: 'Σ max(total_collection, actual_collection) ÷ Σ worked_ha  (converted to USD at point-in-time FX)',
+    notes: 'Average revenue yield per worked hectare. Both the collection amount and the FX conversion use each row\'s own month rate. High values reflect a favourable crop mix or premium contracts; low values may indicate collection shortfalls or low-rate regions dominating the window.',
   },
   {
     label: 'Repayment Rate (Collections Trend)',
-    formula: 'Σ paid ÷ Σ owed × 100 across the selected date window',
-    notes: 'owed here is expected_collection from HT performance records. Different from the portfolio-level repayment rate above because it is filtered to the selected month window and chart-level country / crop filters.',
+    formula: 'Σ max(total_collection, actual_collection) ÷ Σ expected_collection × 100',
+    notes: 'Numerator and denominator are both converted to USD using the FX rate as of each row\'s month. Filtered to the selected date window. Different from the portfolio-level repayment rate which uses covenant obligations (ha × rate) rather than expected_collection as the denominator.',
   },
 ]
 
@@ -93,13 +98,23 @@ export const FX_METRICS: FootnoteMetric[] = [
   },
   {
     label: 'ALM — Historical Inflows',
-    formula: 'Σ actual collections per quarter from HT performance records, converted to USD',
-    notes: 'FX conversion uses the exchange rate observed closest to each quarter-end. Grouped by repayment date quarter.',
+    formula: 'Σ max(total_collection, actual_collection) per quarter, converted to USD at point-in-time FX',
+    notes: 'FX conversion uses the rate last observed on or before the end of each row\'s own month — not today\'s rate. This ensures historical USD values reflect the economic reality of that period rather than being distorted by subsequent currency moves.',
   },
   {
     label: 'ALM — Projected Inflows',
     formula: 'covenant_ha × rate_per_ha × seasonality_index × (months remaining in quarter)',
-    notes: 'Seasonality index is the average worked/covenant ratio for each calendar month across all countries. Missing months default to 1.0. Repayments are sourced from the active facility schedule.',
+    notes: 'Seasonality index is the average worked/covenant ratio for each calendar month across all countries. Missing months default to 1.0. Future projections use current FX rates. Repayments are sourced from the active facility schedule.',
+  },
+  {
+    label: 'Portfolio Duration',
+    formula: 'Σ(PV_i × D_i) ÷ Σ(PV_i)  where D_i = Σ[t × CF/(1+r_f)^t] ÷ PV_i  for t = 1…(60−t₀)',
+    notes: 'Macaulay duration adapted to the PAYG context. CF = monthly_covenant_target × repayment_per_ha converted to USD at current rates. t₀ = months elapsed since origination_date. r_f = WACF ÷ 12 (monthly funding cost). Agreements with no origination date or zero covenant are excluded. Duration shortens naturally as agreements age and as new originations are not added.',
+  },
+  {
+    label: 'Forward Cashflow Profile',
+    formula: 'PV_t = Σ_i [ CF_i ÷ (1 + r_f)^t ]  for each month t from 1 to max remaining term',
+    notes: 'Aggregate present value of all expected PAYG cashflows arriving in each future month, then grouped into quarters for display. The profile steepens near the centre of the remaining term distribution and tapers as agreements mature. Defaults and early repayments are not modelled — actual receipts will deviate.',
   },
 ]
 
@@ -158,9 +173,9 @@ export const COMMODITY_METRICS: FootnoteMetric[] = [
     notes: 'A high concentration ratio means portfolio revenue is disproportionately exposed to a single crop or use-case. Sourced from PAYG tractor records using implement type as a crop proxy.',
   },
   {
-    label: 'Crop Price Index',
-    formula: 'price_t ÷ price_2022 × 100, indexed to 2022 = 100',
-    notes: 'Tracks relative price change for Wheat, Rice, and Maize from the international commodity price sheet. Higher index = prices have risen above 2022 baseline, improving farmer revenue capacity.',
+    label: 'Crop Prices',
+    formula: 'Monthly spot/futures price in $/mt from the Crop_Prices sheet',
+    notes: 'Covers Wheat (CBOT front-month), Rice, and Maize from Jan 2022 to latest available month. % change is computed from Jan 2022 (first row) to the latest month. Higher prices indicate improved farmer revenue capacity and stronger PAYG repayment potential.',
   },
 ]
 
@@ -172,8 +187,8 @@ export const ALERTS_METRICS: FootnoteMetric[] = [
   },
   {
     label: 'Repayment Rate Alerts',
-    formula: 'Triggered when country-level repayment rate (paid ÷ owed × 100) falls below the rule threshold',
-    notes: 'Compared against the latest available HT performance data for the country. Rate is computed across all active records — not just the most recent month.',
+    formula: 'Triggered when country-level Σ max(total_collection, actual_collection) ÷ Σ (covenant_ha × rate_per_ha) × 100 falls below the rule threshold',
+    notes: 'Uses the same covenant-based denominator and point-in-time FX conversion as the portfolio repayment rate. Computed across all past HT performance records for the country — not just the most recent month.',
   },
   {
     label: 'Political Risk Alerts',

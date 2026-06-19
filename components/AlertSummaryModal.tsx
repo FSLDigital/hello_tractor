@@ -4,6 +4,11 @@ import { AlertBadge } from '@/components/ui'
 import type { Alert } from '@/lib/data'
 import type { AlertContext } from '@/lib/types'
 
+interface Citation {
+  url: string
+  title: string
+}
+
 interface Props {
   alert: Alert
   context: AlertContext
@@ -24,6 +29,7 @@ export default function AlertSummaryModal({
 }: Props) {
   const [open, setOpen] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
+  const [citations, setCitations] = useState<Citation[]>([])
   const [loading, setLoading] = useState(false)
 
   async function handleClick() {
@@ -38,6 +44,7 @@ export default function AlertSummaryModal({
       })
       const data = await res.json()
       setSummary(data.summary)
+      setCitations(data.citations ?? [])
     } catch {
       setSummary('Unable to load summary.')
     }
@@ -86,20 +93,49 @@ export default function AlertSummaryModal({
               background: 'var(--bg-raised)', borderRadius: '8px',
               padding: '14px 16px',
               minHeight: isLarge ? '120px' : '72px',
-              display: 'flex', alignItems: loading ? 'center' : 'flex-start',
+              display: 'flex', flexDirection: 'column', gap: '12px',
+              justifyContent: loading ? 'center' : 'flex-start',
             }}>
               {loading ? (
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                  Generating summary…
+                  Searching for context…
                 </span>
               ) : (
-                <span style={{
-                  fontSize: isLarge ? '13px' : '12px',
-                  color: 'var(--text-secondary)',
-                  lineHeight: 1.7,
-                }}>
-                  {summary}
-                </span>
+                <>
+                  <span style={{
+                    fontSize: isLarge ? '13px' : '12px',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.7,
+                  }}>
+                    {summary}
+                  </span>
+
+                  {citations.length > 0 && (
+                    <div style={{ borderTop: '0.5px solid var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
+                        Sources
+                      </span>
+                      {citations.map((c, i) => (
+                        <a
+                          key={i}
+                          href={c.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'flex', alignItems: 'baseline', gap: '6px',
+                            fontSize: '11px', color: 'var(--accent)',
+                            textDecoration: 'none', lineHeight: 1.4,
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                        >
+                          <span style={{ fontFamily: 'DM Mono, monospace', color: 'var(--text-muted)', flexShrink: 0 }}>{i + 1}.</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
