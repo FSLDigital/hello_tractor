@@ -60,6 +60,35 @@ export function loadData(): DashboardData {
 
 // --- Crop → Region mapping (Maize, Rice, or Wheat only) ---
 
+const CC_NAME: Record<string, string> = { KE: 'Kenya', NG: 'Nigeria', ET: 'Ethiopia', UG: 'Uganda', RW: 'Rwanda' }
+
+const REGION_CODE_LABELS: Record<string, string> = {
+  'NG-KN': 'Nigeria - Kaduna',
+  'NG-SE': 'Nigeria - South East',
+  'NG-NC': 'Nigeria - North Central',
+  'NG-NE': 'Nigeria - North East',
+  'NG-NW': 'Nigeria - North West',
+  'NG-SW': 'Nigeria - South West',
+  'KE-RV': 'Kenya - Rift Valley',
+  'KE-NY': 'Kenya - Nyanza',
+  'KE-CT': 'Kenya - Central',
+  'ET-BA': 'Ethiopia - Bale',
+  'ET-ES': 'Ethiopia - East Shewa',
+  'ET-SI': 'Ethiopia - Siltie',
+  'ET-WA': 'Ethiopia - West Arsi',
+  'UG-CR': 'Uganda - Central Region',
+  'UG-ER': 'Uganda - Eastern Region',
+  'UG-NR': 'Uganda - Northern Region',
+  'UG-WR': 'Uganda - Western Region',
+  'RW-KG': 'Rwanda - Kigali',
+}
+
+function regionCodeToLabel(code: string): string {
+  if (REGION_CODE_LABELS[code]) return REGION_CODE_LABELS[code]
+  const [cc, ...rest] = code.split('-')
+  return `${CC_NAME[cc] || cc} - ${rest.join('-')}`
+}
+
 export const CROP_REGION_MAP: Record<string, string> = {
   // Ethiopia
   'Bale':                      'Wheat',
@@ -102,38 +131,48 @@ export interface HTFilters {
 
 export function getFilterOptions(data: DashboardData) {
   const countries = new Set<string>()
-  const regions = new Set<string>()
+  const regionToCountry: Record<string, string> = {}
   const implements_ = new Set<string>()
   const trustees = new Set<string>()
 
   for (const r of data.htPerformance) {
     if (r.country) countries.add(r.country)
-    if (r.region) regions.add(r.region)
+    if (r.region && r.country) regionToCountry[r.region] = r.country
     if (r.primary_implement) implements_.add(r.primary_implement)
     if (r.funder) trustees.add(r.funder)
   }
 
+  const regions = Object.keys(regionToCountry).sort()
+  const regionLabels: Record<string, string> = {}
+  for (const region of regions) regionLabels[region] = `${regionToCountry[region]} — ${region}`
+
   return {
     countries: [...countries].sort(),
-    regions: [...regions].sort(),
+    regions,
+    regionLabels,
     implements: [...implements_].sort(),
     funders: [...trustees].sort(),
     crops: getCropFilterOptions(),
   }
 }
 
+function splitFilter(val?: string): string[] {
+  return val ? val.split(',').map(s => s.trim()).filter(Boolean) : []
+}
+
 export function filterHTPerformance(perf: HTPerformance[], filters: HTFilters): HTPerformance[] {
-  const selectedCountries = filters.country
-    ? filters.country.split(',').map(s => s.trim()).filter(Boolean)
-    : []
+  const countries = splitFilter(filters.country)
+  const regions = splitFilter(filters.region)
+  const implements_ = splitFilter(filters.implement)
+  const funders = splitFilter(filters.funder)
+  const crops = splitFilter(filters.crop)
+
   return perf.filter(r => {
-    if (selectedCountries.length > 0 && !selectedCountries.includes(r.country)) return false
-    if (filters.region && r.region !== filters.region) return false
-    if (filters.implement && r.primary_implement !== filters.implement) return false
-    if (filters.funder && r.funder !== filters.funder) return false
-    if (filters.crop) {
-      if (CROP_REGION_MAP[r.region || ''] !== filters.crop) return false
-    }
+    if (countries.length > 0 && !countries.includes(r.country)) return false
+    if (regions.length > 0 && !regions.includes(r.region || '')) return false
+    if (implements_.length > 0 && !implements_.includes(r.primary_implement || '')) return false
+    if (funders.length > 0 && !funders.includes(r.funder || '')) return false
+    if (crops.length > 0 && !crops.includes(CROP_REGION_MAP[r.region || ''] || '')) return false
     return true
   })
 }
@@ -397,14 +436,32 @@ export function getPortfolioPeriod(data: DashboardData, filters?: HTFilters): { 
 }
 
 // Exposure keyed by currency code (USD) — used for FX VaR
+// Matches getPAYGOutstanding: past covenant shortfalls + future contracted cashflows per currency
 export function getExposureByCurrency(data: DashboardData): Record<string, number> {
   const fxRates = buildFXRates(data)
+  const hfx = buildHistoricalFXRates(data)
   const now = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const result: Record<string, number> = {}
+
+  // Past shortfall per currency (underpaid covenants)
+  for (const r of data.htPerformance) {
+    const yr = r.year; const mn = r.month_num
+    if (!yr || !mn || !r.currency_code) continue
+    const key = `${yr}-${String(mn).padStart(2, '0')}`
+    if (key > currentMonth) continue
+    const covenantLocal = (Number(r.monthly_covenant_target) || 0) * (Number(r.repayment_per_area) || 0)
+    const covenantUSD = toUSDAt(covenantLocal, r.currency_code, key, hfx)
+    const paidUSD = toUSDAt(Math.max(Number(r.total_collection) || 0, Number(r.actual_collection) || 0), r.currency_code, key, hfx)
+    if (covenantUSD > paidUSD) result[r.currency_code] = (result[r.currency_code] || 0) + (covenantUSD - paidUSD)
+  }
+
+  // Future exposure per currency
   for (const meta of buildTractorMeta(data).values()) {
     if (!meta.currency_code) continue
     result[meta.currency_code] = (result[meta.currency_code] || 0) + tractorExposureUSD(meta, fxRates, now)
   }
+
   return result
 }
 
@@ -1099,8 +1156,8 @@ export function getAlerts(data: DashboardData): Alert[] {
   }
 
   for (const r of latestWeather) {
-    if (r.drought_risk_score > 75) alerts.push({ id: `drought-${r.region_code}`, severity: 'critical', category: 'Weather', country: r.region_code.split('-')[0], message: `Drought risk ${r.drought_risk_score.toFixed(0)}/100 in ${r.region_code}`, metric: r.drought_risk_score, threshold: 75, timestamp: r.year_month })
-    else if (r.flood_risk_score > 70) alerts.push({ id: `flood-${r.region_code}`, severity: 'warning', category: 'Weather', country: r.region_code.split('-')[0], message: `Flood risk ${r.flood_risk_score.toFixed(0)}/100 in ${r.region_code}`, metric: r.flood_risk_score, threshold: 70, timestamp: r.year_month })
+    if (r.drought_risk_score > 75) alerts.push({ id: `drought-${r.region_code}`, severity: 'critical', category: 'Weather', country: r.region_code.split('-')[0], message: `Drought risk ${r.drought_risk_score.toFixed(0)}/100 in ${regionCodeToLabel(r.region_code)}`, metric: r.drought_risk_score, threshold: 75, timestamp: r.year_month })
+    else if (r.flood_risk_score > 70) alerts.push({ id: `flood-${r.region_code}`, severity: 'warning', category: 'Weather', country: r.region_code.split('-')[0], message: `Flood risk ${r.flood_risk_score.toFixed(0)}/100 in ${regionCodeToLabel(r.region_code)}`, metric: r.flood_risk_score, threshold: 70, timestamp: r.year_month })
   }
 
   const latestBrent = [...data.brent].filter(b => b.price_usd).sort((a, b) => b.price_date.localeCompare(a.price_date))[0]
@@ -1122,7 +1179,7 @@ export interface Alert {
   timestamp: string
 }
 
-const CC_TO_COUNTRY: Record<string, string> = { KE: 'Kenya', NG: 'Nigeria', ET: 'Ethiopia', UG: 'Uganda', RW: 'Rwanda' }
+const CC_TO_COUNTRY = CC_NAME
 
 export function buildAlertContext(alert: Alert, data: DashboardData): AlertContext {
   const latestPol = getLatestPoliticalRisk(data)

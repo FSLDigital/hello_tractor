@@ -2,9 +2,10 @@
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useCallback, useRef, useState, useEffect } from 'react'
 
-interface FilterOptions {
+export interface FilterOptions {
   countries: string[]
   regions: string[]
+  regionLabels: Record<string, string>
   implements: string[]
   funders: string[]
   crops?: string[]
@@ -34,14 +35,17 @@ const selectStyle: React.CSSProperties = {
   minWidth: '130px',
 }
 
-// Multi-select dropdown for country
-function CountryMultiSelect({
+function MultiSelect({
+  placeholder,
   options,
   selected,
+  labels,
   onChange,
 }: {
+  placeholder: string
   options: string[]
   selected: string[]
+  labels?: Record<string, string>
   onChange: (values: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -55,22 +59,23 @@ function CountryMultiSelect({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  function toggle(country: string) {
-    onChange(
-      selected.includes(country)
-        ? selected.filter(c => c !== country)
-        : [...selected, country]
-    )
+  const allSelected = selected.length === options.length && options.length > 0
+  const someSelected = selected.length > 0 && !allSelected
+
+  function toggle(val: string) {
+    onChange(selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val])
   }
 
-  const label =
-    selected.length === 0
-      ? 'All countries'
-      : selected.length === options.length
-      ? 'All countries'
-      : selected.length === 1
-      ? selected[0]
-      : `${selected.length} markets`
+  function selectAll() { onChange([...options]) }
+  function clearAll() { onChange([]) }
+
+  const label = allSelected
+    ? `All ${placeholder.toLowerCase()}`
+    : selected.length === 0
+    ? `All ${placeholder.toLowerCase()}`
+    : selected.length === 1
+    ? (labels?.[selected[0]] ?? selected[0])
+    : `${selected.length} ${placeholder.toLowerCase()}`
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -78,13 +83,10 @@ function CountryMultiSelect({
         onClick={() => setOpen(o => !o)}
         style={{
           ...selectStyle,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '6px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px',
           minWidth: '140px',
-          background: selected.length > 0 && selected.length < options.length ? 'rgba(59,130,246,0.08)' : 'var(--bg-raised)',
-          border: selected.length > 0 && selected.length < options.length ? '0.5px solid rgba(59,130,246,0.4)' : '0.5px solid var(--border)',
+          background: someSelected ? 'rgba(59,130,246,0.08)' : 'var(--bg-raised)',
+          border: someSelected ? '0.5px solid rgba(59,130,246,0.4)' : '0.5px solid var(--border)',
         }}
       >
         <span>{label}</span>
@@ -93,58 +95,50 @@ function CountryMultiSelect({
 
       {open && (
         <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 4px)',
-          left: 0,
-          zIndex: 100,
-          background: 'var(--bg-card)',
-          border: '0.5px solid var(--border)',
-          borderRadius: '8px',
-          padding: '6px',
-          minWidth: '160px',
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100,
+          background: 'var(--bg-card)', border: '0.5px solid var(--border)', borderRadius: '8px',
+          padding: '6px', minWidth: '180px', maxHeight: '260px', overflowY: 'auto',
           boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
         }}>
-          {options.map(c => (
+          {/* Select all / Clear all row */}
+          <div style={{ display: 'flex', gap: '4px', padding: '2px 4px 6px', borderBottom: '0.5px solid var(--border)', marginBottom: '4px' }}>
+            <button onClick={selectAll} style={{ flex: 1, fontSize: '10px', fontFamily: 'DM Mono, monospace', color: 'var(--accent)', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '2px 4px' }}>
+              All
+            </button>
+            <button onClick={clearAll} style={{ flex: 1, fontSize: '10px', fontFamily: 'DM Mono, monospace', color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '2px 4px' }}>
+              None
+            </button>
+          </div>
+
+          {options.map(opt => (
             <label
-              key={c}
+              key={opt}
               style={{
                 display: 'flex', alignItems: 'center', gap: '8px',
                 padding: '6px 8px', borderRadius: '5px', cursor: 'pointer',
                 fontSize: '12px', color: 'var(--text-primary)',
-                background: selected.includes(c) ? 'rgba(59,130,246,0.1)' : 'transparent',
+                background: selected.includes(opt) ? 'rgba(59,130,246,0.1)' : 'transparent',
               }}
-              onMouseEnter={e => { if (!selected.includes(c)) (e.currentTarget as HTMLElement).style.background = 'var(--bg-raised)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = selected.includes(c) ? 'rgba(59,130,246,0.1)' : 'transparent' }}
+              onMouseEnter={e => { if (!selected.includes(opt)) (e.currentTarget as HTMLElement).style.background = 'var(--bg-raised)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = selected.includes(opt) ? 'rgba(59,130,246,0.1)' : 'transparent' }}
             >
               <input
                 type="checkbox"
-                checked={selected.includes(c)}
-                onChange={() => toggle(c)}
+                checked={selected.includes(opt)}
+                onChange={() => toggle(opt)}
                 style={{ accentColor: '#3b82f6', width: '13px', height: '13px', cursor: 'pointer' }}
               />
-              {c}
+              {labels?.[opt] ?? opt}
             </label>
           ))}
-          {selected.length > 0 && (
-            <>
-              <div style={{ borderTop: '0.5px solid var(--border)', margin: '4px 0' }} />
-              <button
-                onClick={() => { onChange([]); setOpen(false) }}
-                style={{
-                  width: '100%', textAlign: 'left', padding: '5px 8px',
-                  background: 'transparent', border: 'none',
-                  color: 'var(--text-muted)', fontSize: '11px',
-                  fontFamily: 'DM Mono, monospace', cursor: 'pointer', borderRadius: '5px',
-                }}
-              >
-                Clear
-              </button>
-            </>
-          )}
         </div>
       )}
     </div>
   )
+}
+
+function splitParam(val: string): string[] {
+  return val ? val.split(',').map(s => s.trim()).filter(Boolean) : []
 }
 
 export default function FilterBar({ options, current }: Props) {
@@ -152,74 +146,49 @@ export default function FilterBar({ options, current }: Props) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  const updateFilter = useCallback((key: string, value: string) => {
+  const updateFilter = useCallback((key: string, values: string[]) => {
     const params = new URLSearchParams(searchParams.toString())
-    if (value) {
-      params.set(key, value)
-    } else {
-      params.delete(key)
-    }
-    router.push(`${pathname}?${params.toString()}`)
+    const joined = values.join(',')
+    if (joined) params.set(key, joined); else params.delete(key)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }, [router, pathname, searchParams])
 
-  const selectedCountries = current.country
-    ? current.country.split(',').map(s => s.trim()).filter(Boolean)
-    : []
+  const selCountry = splitParam(current.country)
+  const selRegion = splitParam(current.region)
+  const selImplement = splitParam(current.implement)
+  const selFunder = splitParam(current.funder)
+  const selCrop = splitParam(current.crop ?? '')
 
-  function handleCountryChange(values: string[]) {
-    updateFilter('country', values.join(','))
-  }
-
-  const activeCount = [
-    selectedCountries.length > 0 ? current.country : '',
-    current.region,
-    current.implement,
-    current.funder,
-    current.crop ?? '',
-  ].filter(Boolean).length
+  const activeCount = [selCountry, selRegion, selImplement, selFunder, selCrop]
+    .filter(arr => arr.length > 0 && arr.length < (
+      arr === selCountry ? options.countries.length
+      : arr === selRegion ? options.regions.length
+      : arr === selImplement ? options.implements.length
+      : arr === selFunder ? options.funders.length
+      : (options.crops?.length ?? 0)
+    )).length
 
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
       marginBottom: '20px', padding: '10px 14px',
-      background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-      borderRadius: '10px',
+      background: 'var(--bg-card)', border: '0.5px solid var(--border)', borderRadius: '10px',
     }}>
       <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.06em', marginRight: '4px' }}>
         Filters{activeCount > 0 ? ` (${activeCount} active)` : ''}
       </span>
 
-      <CountryMultiSelect
-        options={options.countries}
-        selected={selectedCountries}
-        onChange={handleCountryChange}
-      />
-
-      <select style={selectStyle} value={current.region} onChange={e => updateFilter('region', e.target.value)}>
-        <option value="">All regions</option>
-        {options.regions.map(r => <option key={r} value={r}>{r}</option>)}
-      </select>
-
-      <select style={selectStyle} value={current.implement} onChange={e => updateFilter('implement', e.target.value)}>
-        <option value="">All implements</option>
-        {options.implements.map(i => <option key={i} value={i}>{i}</option>)}
-      </select>
-
-      <select style={selectStyle} value={current.funder} onChange={e => updateFilter('funder', e.target.value)}>
-        <option value="">All funders</option>
-        {options.funders.map(t => <option key={t} value={t}>{t}</option>)}
-      </select>
-
+      <MultiSelect placeholder="Countries" options={options.countries} selected={selCountry} onChange={v => updateFilter('country', v)} />
+      <MultiSelect placeholder="Regions" options={options.regions} selected={selRegion} labels={options.regionLabels} onChange={v => updateFilter('region', v)} />
+      <MultiSelect placeholder="Implements" options={options.implements} selected={selImplement} onChange={v => updateFilter('implement', v)} />
+      <MultiSelect placeholder="Funders" options={options.funders} selected={selFunder} onChange={v => updateFilter('funder', v)} />
       {options.crops && options.crops.length > 0 && (
-        <select style={selectStyle} value={current.crop ?? ''} onChange={e => updateFilter('crop', e.target.value)}>
-          <option value="">All crops</option>
-          {options.crops.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+        <MultiSelect placeholder="Crops" options={options.crops} selected={selCrop} onChange={v => updateFilter('crop', v)} />
       )}
 
       {activeCount > 0 && (
         <button
-          onClick={() => router.push(pathname)}
+          onClick={() => router.replace(pathname, { scroll: false })}
           style={{
             background: 'transparent', border: '0.5px solid var(--border)',
             borderRadius: '6px', color: 'var(--text-muted)', fontSize: '11px',
